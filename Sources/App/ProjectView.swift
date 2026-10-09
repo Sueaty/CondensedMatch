@@ -130,7 +130,6 @@ struct VideoEditorView: View {
                     EditorTimeline(
                         editor: editor,
                         sourceURL: store.sourceURL(project),
-                        frameRate: project.source.frameRate,
                         position: playback.position,
                         onScrub: { playback.scrub(to: $0) },
                         onScrubEnd: { time in
@@ -152,7 +151,7 @@ struct VideoEditorView: View {
                             Text("Clip \(editor.includedClips.firstIndex(where: { $0.id == selected.id }).map { $0 + 1 } ?? 0)")
                                 .font(.subheadline.bold())
                             Spacer(minLength: 8)
-                            Text(editorTimecode(selected.duration, frameRate: project.source.frameRate))
+                            Text(timeLabel(selected.duration))
                                 .font(.subheadline.monospacedDigit())
                                 .accessibilityIdentifier("editor-selected-clip-duration")
                         }
@@ -290,4 +289,5 @@ struct VideoEditorView: View {
             }
         }
     }
+
 }

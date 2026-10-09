@@ -5,7 +5,6 @@ import AVFoundation
 struct EditorTimeline: View {
     let editor: EditorState
     let sourceURL: URL
-    let frameRate: Double
     let position: Double
     let onScrub: (Double) -> Void
     let onScrubEnd: (Double) -> Void
@@ -23,7 +22,7 @@ struct EditorTimeline: View {
     var body: some View {
         VStack(spacing: 8) {
             HStack {
-                Text(editorTimecode(position, frameRate: frameRate))
+                Text(timeLabel(position))
                     .font(.system(.headline, design: .monospaced))
                     .accessibilityIdentifier("editor-playback-time")
                 Spacer()
@@ -36,7 +35,6 @@ struct EditorTimeline: View {
                         TimelineTile(
                             info: info,
                             selected: editor.selectedClipID == info.clipID,
-                            frameRate: frameRate,
                             provider: provider,
                             onSelect: { onSelect(info.clipID) }
                         )
@@ -107,7 +105,6 @@ struct EditorTimeline: View {
 private struct TimelineTile: View {
     let info: EditorTimelineTile
     let selected: Bool
-    let frameRate: Double
     let provider: TimelineThumbnailProvider?
     let onSelect: () -> Void
     @State private var image: UIImage?
@@ -120,7 +117,7 @@ private struct TimelineTile: View {
                 MatchStyle.ink.opacity(info.clipNumber.isMultiple(of: 2) ? 0.85 : 1)
             }
             if info.tileNumber == 0 && info.width >= 100 {
-                Text(editorTimecode(info.clipDuration, frameRate: frameRate))
+                Text(timeLabel(info.clipDuration))
                     .font(.caption2.monospacedDigit().bold())
                     .lineLimit(1)
                     .fixedSize()

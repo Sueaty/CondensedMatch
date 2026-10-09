@@ -173,16 +173,8 @@ public enum MatchError: LocalizedError, Sendable {
 }
 
 public func timeLabel(_ seconds: Double) -> String {
-    guard seconds.isFinite else { return "0:00" }
+    guard seconds.isFinite else { return "00:00" }
     let total = max(0, Int(seconds))
     return total >= 3600 ? String(format: "%d:%02d:%02d", total / 3600, (total / 60) % 60, total % 60)
-        : String(format: "%d:%02d", total / 60, total % 60)
-}
-
-public func editorTimecode(_ seconds: Double, frameRate: Double) -> String {
-    guard seconds.isFinite, frameRate.isFinite, frameRate > 0 else { return "0:00:00" }
-    let whole = max(0, Int(seconds))
-    let fps = max(1, Int(frameRate.rounded()))
-    let frame = min(fps - 1, max(0, Int(((seconds - Double(whole)) * Double(fps)).rounded())))
-    return "\(timeLabel(seconds)):\(String(format: "%02d", frame))"
+        : String(format: "%02d:%02d", total / 60, total % 60)
 }

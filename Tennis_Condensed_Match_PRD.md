@@ -30,7 +30,7 @@ The MVP solves one problem only: finding and retaining the portions of a tennis 
 
 The product uses a hybrid approach:
 
-- The video editor provides manual trimming, inclusion, exclusion, and segment-management tools independently of AI.
+- The video editor provides manual splitting, inclusion, exclusion, and segment-management tools independently of AI.
 - User-invoked on-device audio and visual analysis proposes likely point segments.
 - Deterministic temporal rules convert observations into editable point segments.
 - AVFoundation creates non-destructive condensed playback and an optional exported video.
@@ -46,7 +46,7 @@ The product hypothesis is that users will review and share more recorded tennis 
 This PRD is based on a product hypothesis and competitive-product observation, not completed user research. Before public launch, the team must validate:
 
 - How often target users record matches.
-- How much time they currently spend trimming or reviewing recordings.
+- How much time they currently spend editing or reviewing recordings.
 - Whether users prefer maximum dead-time removal or additional context around points.
 - What correction burden users consider acceptable.
 - Which editor actions users need before they are willing to rely on AI suggestions.
@@ -127,7 +127,7 @@ The following are explicitly outside MVP scope:
 3. The user can immediately preview and edit the video manually.
 4. From the editor, the user may configure the court region and invoke **Find Points with AI**.
 5. Analysis runs on-device and returns candidate point segments as reviewable suggestions in the same editor.
-6. The user accepts, rejects, trims, splits, merges, adds, or removes segments while comparing condensed and source context.
+6. The user accepts, rejects, splits, merges, adds, or removes segments while comparing condensed and source context.
 7. The user previews the current condensed timeline.
 8. The user exports the result or leaves the persistent project to continue later.
 
@@ -142,12 +142,11 @@ The following are explicitly outside MVP scope:
 5. As a user, I want first-serve faults and the following second serve kept together so that a single point is not fragmented.
 6. As a user, I want to preview the condensed match without exporting so that I can evaluate the result immediately.
 7. As a user, I want to restore excluded footage and remove false detections so that automation never permanently hides content.
-8. As a user, I want to adjust the beginning and end of a segment so that I can correct imperfect boundaries.
-9. As a user, I want to export the corrected condensed match so that I can save or share it.
-10. As a user, I want clear handling of low-confidence or failed analysis so that I know when manual review is needed.
-11. As a privacy-conscious user, I want analysis to remain on my iPhone so that my match footage is not uploaded without consent.
-12. As a user, I want AI to be optional and user-invoked so that I remain in control of when analysis changes the proposed edit.
-13. As a user, I want AI suggestions to remain distinguishable from my committed edits so that I can review them before relying on them.
+8. As a user, I want to export the corrected condensed match so that I can save or share it.
+9. As a user, I want clear handling of low-confidence or failed analysis so that I know when manual review is needed.
+10. As a privacy-conscious user, I want analysis to remain on my iPhone so that my match footage is not uploaded without consent.
+11. As a user, I want AI to be optional and user-invoked so that I remain in control of when analysis changes the proposed edit.
+12. As a user, I want AI suggestions to remain distinguishable from my committed edits so that I can review them before relying on them.
 
 ### Edge-case stories
 
@@ -191,7 +190,7 @@ Acceptance criteria:
 
 - The imported source is playable as soon as the project opens.
 - The editor exposes source and condensed context, an editable timeline, undo and redo, and a clear export action.
-- The user can create, trim, split, merge, include, exclude, and delete editable segments without running AI.
+- The user can create, split, merge, include, exclude, and delete editable segments without running AI.
 - AI features are invoked from the editor and return suggestions to the editor rather than navigating to a separate mandatory workflow.
 - AI suggestions do not silently overwrite committed manual edits.
 - Closing and reopening the project restores the last committed edit state.
@@ -268,7 +267,6 @@ Acceptance criteria:
 - The review UI distinguishes included, excluded, and needs-review intervals without relying only on color.
 - Tapping a segment plays its source context.
 - The user can include or exclude a segment.
-- The user can adjust segment start and end times with frame-appropriate precision.
 - The user can add a segment manually from excluded footage.
 - The user can split and merge segments.
 - Undo and redo are available for editing actions.
@@ -526,7 +524,6 @@ The production implementation should use precise media time rather than floating
 - Do not communicate included/excluded/confidence states through color alone.
 - Provide text labels for timeline actions.
 - Respect Reduce Motion where transitions are nonessential.
-- Make trim handles usable with alternative increment/decrement controls, not drag gestures alone.
 
 ## 16. Non-functional requirements
 
@@ -566,7 +563,7 @@ The production implementation should use precise media time rather than floating
 - **Dead-time removal rate:** annotated dead time excluded / total annotated dead time.
 - **Segment boundary error:** absolute difference between predicted and annotated boundaries.
 - **False-segment rate:** included segments containing no target-court point activity.
-- **Correction burden:** segment additions, exclusions, and boundary edits per ten annotated points.
+- **Correction burden:** segment additions, exclusions, and splits per ten annotated points.
 
 ### Product behavior
 
@@ -721,7 +718,7 @@ No calendar estimate is committed in this PRD because team size, available label
 - Annotation process and tooling
 - ML training environment and model conversion pipeline
 - Physical supported iPhones for performance and thermal testing
-- Product design for court setup, review, and trimming interactions
+- Product design for court setup and review interactions
 - Privacy review for analytics and any future training-data opt-in
 - App Store assets, privacy declarations, and support documentation before public release
 

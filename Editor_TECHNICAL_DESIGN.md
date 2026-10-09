@@ -10,7 +10,7 @@
 
 이 문서는 SwiftUI + AVFoundation으로 단일 영상의 Split, ripple delete, Undo/Redo, 미리보기, Export를 구현하는 구조를 정의한다.
 
-> 구현 상태(2026-10-09): 스크롤 중 composition seek, 썸네일 타일, Split/Delete/Undo/Redo와 gap-free 타임라인 계산은 구현했다. Split은 요청 지점 주변의 비디오 sample presentation timestamp를 `AVAssetReader`로 읽어 가장 가까운 내부 경계를 선택하며, VFR fixture 테스트가 통과했다. 아래의 재사용 가능한 전체 sample index, 실제 기기 VFR 영상 검증과 장시간 성능 측정은 아직 남았다.
+> 구현 상태(2026-10-09): 고정 배율 타임라인의 스크롤 중 composition seek, 썸네일 타일, Split/Delete/Undo/Redo와 gap-free 타임라인 계산은 구현했다. 타임라인 핀치 줌은 제품 범위에서 제거했다. Split은 원본 비디오 sample presentation timestamp를 `AVAssetReader`로 읽는다. VFR fixture 테스트는 통과했으며 실제 기기 조작, 재사용 가능한 전체 sample index와 장시간 성능 측정은 아직 남았다.
 
 ### 1.1 UI 프레임워크 결정
 
@@ -62,7 +62,7 @@ VideoEditorView ───────────────► EditorStore
      │                               │
      ├────────► TimelineView ─────────┤
      │             │                 ├────────► ThumbnailService
-     │             └ scroll/pinch    ├────────► CompositionBuilder ─► AVPlayerItem
+     │             └ scroll          ├────────► CompositionBuilder ─► AVPlayerItem
      │                               └────────► ExportCoordinator ──► AVAssetExportSession
      └────────► PlayerView / AVPlayer
 ```
@@ -74,11 +74,11 @@ VideoEditorView ───────────────► EditorStore
 | `VideoEditorView` | 화면 배치, intent 전달, 상태 렌더링 | 시간 계산, AV composition 편집 |
 | `EditorStore` | 단일 `EditorState`, 명령 실행, 불변식 검증 | SwiftUI view 직접 조작 |
 | `TimelineView` | 타임라인 셀, playhead overlay, 제스처 | source range 변경 |
-| `TimelineLayout` | 시간↔x, item frame, inset, zoom 계산 | seek, thumbnail decoding |
+| `TimelineLayout` | 고정 배율의 시간↔x, item frame, inset 계산 | seek, thumbnail decoding |
 | `PlaybackController` | player item 교체, play/pause/seek, time observation | 편집 정책 결정 |
 | `CompositionBuilder` | chunks를 연속 AVComposition으로 작성 | 사용자 상태 저장 |
 | `ThumbnailService` | 시간별 이미지 비동기 생성·캐시·취소 | 편집 상태 변경 |
-| `EditHistory` | Split/Delete 전후 상태 Undo/Redo | 스크롤/줌 이력 |
+| `EditHistory` | Split/Delete 전후 상태 Undo/Redo | 스크롤 이력 |
 | `ExportCoordinator` | 호환성 검사, 파일 생성, 진행/취소, 정리 | chunk 변경 |
 | `AssetInspector` | 자산 속성과 지원 가능성 판정 | UI 표현 |
 
@@ -134,7 +134,6 @@ enum PlaybackState: Equatable {
 - chunk 순서
 - 선택 ID
 - 편집 playhead 시간
-- 줌 배율
 - 상태 revision
 
 계산:
@@ -268,17 +267,9 @@ func time(for contentOffsetX: CGFloat, scale: TimelineScale) -> CMTime {
 
 실제 구현은 `CMTime.seconds`에서 NaN/무한대를 검사한다. UI에서 계산한 시간을 모델 timescale로 즉시 변환한다.
 
-### 6.3 줌 알고리즘
+### 6.3 고정 배율
 
-playhead 고정 줌:
-
-```text
-anchorTime = time(oldContentOffset, oldScale)
-newPPS = clamp(pinchStartPPS × gesture.scale, minPPS, maxPPS)
-newContentOffsetX = contentX(anchorTime, newScale) - playheadX
-```
-
-레이아웃 invalidate와 offset 적용을 같은 main-thread update 안에서 수행한다. floating-point 누적 오차를 피하기 위해 매 gesture update마다 직전 offset을 다시 확대하지 않고, pinch 시작점의 `anchorTime`과 `pinchStartPPS`에서 계산한다.
+타임라인 배율은 30 pt/s로 고정한다. 핀치 제스처와 배율 변경 상태는 두지 않으며, playhead 기준 위치 탐색은 스크롤 오프셋을 편집 시간으로 변환해 처리한다.
 
 ### 6.4 스크롤 소유권
 
@@ -305,7 +296,7 @@ enum TimelineDriver {
 - 화면에 보이는 범위와 좌우 prefetch 범위만 요청한다.
 - 요청 키: `(assetID, sourceTimeBucket, targetPixelSize, contentScale)`
 - edit time을 source time으로 변환해 원본에서 이미지를 만든다.
-- zoom에 따라 샘플 간격을 바꾸되 기존 저해상도 이미지를 placeholder로 재사용할 수 있다.
+- 고정된 타일 간격으로 원본에서 썸네일을 생성한다.
 
 ### 7.2 동시성과 취소
 
@@ -454,7 +445,6 @@ enum EditorIntent {
     case beginScrubbing
     case scrub(to: CMTime)
     case endScrubbing(at: CMTime)
-    case setZoom(CGFloat)
     case playPause
     case split
     case deleteSelection
@@ -588,8 +578,7 @@ enum EditorError: LocalizedError {
 
 - 시간↔좌표 round trip
 - 0과 전체 길이의 중앙 정렬
-- min/default/max zoom
-- 핀치 전후 anchor time 보존
+- 고정 배율의 타일 폭과 시간↔좌표 변환
 - bounds/rotation 변경 후 offset 재계산
 
 `EditCommandTests`
@@ -622,7 +611,7 @@ enum EditorError: LocalizedError {
 - 영상 선택 → 스크롤 → Split → 선택 → Delete → Undo → Redo → Export happy path
 - 버튼 enabled 상태
 - 중앙 playhead 고정
-- 줌 후 기준 시간 유지
+- 스크롤 후 중앙 시간과 미리보기 동기화
 - 권한 거부와 오류 복구
 - VoiceOver label 존재
 
@@ -645,7 +634,7 @@ enum EditorError: LocalizedError {
 
 - timeline은 duration 비례 cell만 배치하고 bitmap 전체 strip을 한 번에 만들지 않는다.
 - 썸네일 target size는 실제 cell pixel 크기를 넘지 않게 한다.
-- 확대 수준별 thumbnail 요청을 debounce하고 prefetch window를 제한한다.
+- thumbnail 요청을 debounce하고 prefetch window를 제한한다.
 - player time update는 화면 refresh보다 자주 UI를 변경하지 않는다.
 - composition rebuild는 main thread 밖에서 수행하고, UI는 lightweight snapshot만 적용한다.
 - Instruments로 Time Profiler, Allocations, Leaks, Core Animation hitch를 측정한다.
@@ -655,7 +644,7 @@ enum EditorError: LocalizedError {
 ## 16. 접근성·현지화 구현
 
 - 문자열은 코드에 직접 넣지 않고 localization resource로 관리한다.
-- 시간은 `DateComponentsFormatter`에 의존해 프레임 단위를 잃지 않도록 전용 formatter로 `HH:MM:SS`와 frame/subsecond를 구분한다.
+- 사용자에게 보이는 시간은 1시간 미만 `MM:SS`, 1시간 이상 `H:MM:SS`로 표시하고 프레임 번호를 덧붙이지 않는다. Split과 VFR 경계 계산의 프레임 정밀도는 내부 미디어 시간으로 유지한다.
 - VoiceOver가 chunk를 읽을 때 `구간 2, 10초부터 15초, 5초 길이, 선택됨`처럼 편집 시간을 제공한다.
 - playhead 조절은 accessibility adjustable action으로 앞/뒤 프레임 이동을 제공하는 방안을 검토한다.
 - selected/disabled는 색 외에 border, alpha, trait/value로 표현한다.
@@ -685,15 +674,15 @@ enum EditorError: LocalizedError {
 - layout, inset, thumbnail service, selection
 - 통과: 좌표 round trip과 시작/끝 중앙 정렬
 
-### Gate 3. Sync/Zoom
+### Gate 3. Sync
 
-- driver state, seek coalescing, periodic observer, pinch
-- 통과: 1프레임 이내 최종 동기화와 anchor 보존
+- driver state, seek coalescing, periodic observer
+- 통과: 1프레임 이내 최종 동기화
 
 ### Gate 4. Editing
 
 - composition builder, Split/Delete, rebuild transaction
-- 통과: source coverage, ripple, 실제 경계 재생
+- 통과: source coverage, ripple, Split의 VFR 프레임 경계와 실제 경계 재생
 
 ### Gate 5. History
 

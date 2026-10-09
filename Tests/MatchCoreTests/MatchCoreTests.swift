@@ -236,7 +236,7 @@ final class MatchCoreTests: XCTestCase {
     }
 
     func testTimelineTilesRemainAdjacentAcrossSplitAndDeletion() throws {
-        XCTAssertEqual(editorTimecode(10 + 23.0 / 30, frameRate: 30), "0:10:23")
+        XCTAssertEqual(timeLabel(10 + 23.0 / 30), "00:10")
         var edit = try EditorState(sourceDuration: 12)
         try edit.split(atEditTime: 3, minimumClipDuration: 1.0 / 30)
         try edit.split(atEditTime: 7, minimumClipDuration: 1.0 / 30)
@@ -272,6 +272,13 @@ final class MatchCoreTests: XCTestCase {
         let square = EditorPreviewLayout.size(sourceWidth: 1080, sourceHeight: 1080, maxWidth: 360, maxHeight: 300)
         XCTAssertEqual(square.width, 300, accuracy: 0.001)
         XCTAssertEqual(square.height, 300, accuracy: 0.001)
+    }
+
+    func testVisibleTimeLabelsOmitFrameNumber() {
+        XCTAssertEqual(timeLabel(7 * 60 + 38 + 14.0 / 30), "07:38")
+        XCTAssertEqual(timeLabel(59 * 60 + 59.9), "59:59")
+        XCTAssertEqual(timeLabel(3600), "1:00:00")
+        XCTAssertEqual(timeLabel(.nan), "00:00")
     }
 
     func testAnalysisSuggestionsPersistSeparatelyFromEdits() async throws {
