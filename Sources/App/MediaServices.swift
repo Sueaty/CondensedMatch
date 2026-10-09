@@ -57,6 +57,8 @@ actor SourceAssetStore {
                                           width: Int(abs(displaySize.width)), height: Int(abs(displaySize.height)),
                                           frameRate: fps > 0 ? fps : 30, hasAudio: !audio.isEmpty, byteCount: bytes)
         var project = MatchProject(id: id, title: "Match · " + Date().formatted(.dateTime.month(.abbreviated).day()), source: source)
+        // Import opens a usable manual edit without requiring analysis.
+        project.segments = [PointSegment(start: 0, end: duration)]
         if source.height > source.width { project.warnings.append("Portrait video: detection works best with a fixed landscape camera behind the baseline.") }
         if !source.hasAudio { project.warnings.append("No audio track. Detection will rely on court movement; review the result carefully.") }
         if source.width > 3840 || source.height > 2160 { project.warnings.append("Above 4K: this recording may take longer to process and has not been validated.") }
@@ -78,6 +80,13 @@ actor SourceAssetStore {
 }
 
 enum CompositionBuilder {
+    static func build(source: URL, project: MatchProject) async throws -> AVMutableComposition {
+        if project.editorIsAuthoritative == true, let editor = project.editorState {
+            let clips = editor.includedClips.map { PointSegment(start: $0.sourceStart, end: $0.sourceEnd) }
+            return try await build(source: source, segments: clips, duration: project.source.duration)
+        }
+        return try await build(source: source, segments: project.segments, duration: project.source.duration)
+    }
     static func build(source: URL, segments: [PointSegment], duration: Double) async throws -> AVMutableComposition {
         guard FileManager.default.fileExists(atPath: source.path) else { throw MatchError.missingSource }
         let ranges = Timeline.ranges(segments, duration: duration)
@@ -126,7 +135,7 @@ final class ExportService {
         // High-quality export may exceed source bitrate; reserve a generous allowance.
         let estimate = Self.requiredSpace(project)
         try StorageSpace.require(estimate, at: folder)
-        let composition = try await CompositionBuilder.build(source: source, segments: project.segments, duration: project.source.duration)
+        let composition = try await CompositionBuilder.build(source: source, project: project)
         guard !cancellationRequested else { throw CancellationError() }
         guard let exporter = AVAssetExportSession(asset: composition, presetName: AVAssetExportPresetHighestQuality) else {
             throw MatchError.invalidMedia("This video cannot be exported on this device.")

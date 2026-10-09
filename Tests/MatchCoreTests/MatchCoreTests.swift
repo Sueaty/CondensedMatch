@@ -100,4 +100,191 @@ final class MatchCoreTests: XCTestCase {
         XCTAssertNil(empty.falseSegmentRate)
         XCTAssertEqual(empty.deadTimeRemoval, 1)
     }
+
+    func testEditorSplitExcludeUndoRedoAndTimeMapping() throws {
+        var editor = try EditorState(sourceDuration: 30)
+        try editor.split(atEditTime: 10, minimumClipDuration: 1.0 / 30.0)
+        try editor.split(atEditTime: 20, minimumClipDuration: 1.0 / 30.0)
+
+        XCTAssertEqual(editor.includedClips.map(\.sourceStart), [0, 10, 20])
+        XCTAssertEqual(editor.includedClips.map(\.sourceEnd), [10, 20, 30])
+        XCTAssertEqual(editor.selectedClipID, editor.includedClips[2].id)
+        XCTAssertEqual(try editor.sourceTime(atEditTime: 20), 20)
+
+        try editor.select(editor.includedClips[1].id)
+        try editor.excludeSelected()
+        XCTAssertEqual(editor.totalDuration, 20)
+        XCTAssertEqual(editor.playheadTime, 10)
+        XCTAssertEqual(try editor.sourceTime(atEditTime: 10), 20)
+
+        editor.undo()
+        XCTAssertEqual(editor.totalDuration, 30)
+        editor.undo()
+        editor.undo()
+        XCTAssertEqual(editor.clips.count, 1)
+        XCTAssertEqual(editor.totalDuration, 30)
+
+        editor.redo()
+        editor.redo()
+        editor.redo()
+        XCTAssertEqual(editor.totalDuration, 20)
+        XCTAssertEqual(editor.includedClips.map(\.sourceStart), [0, 20])
+    }
+
+    func testEditorRestoreAndNewEditClearRedo() throws {
+        var editor = try EditorState(sourceDuration: 30)
+        try editor.split(atEditTime: 10, minimumClipDuration: 1.0 / 30.0)
+        let removedID = try XCTUnwrap(editor.selectedClipID)
+        try editor.excludeSelected()
+        XCTAssertEqual(editor.totalDuration, 10)
+        XCTAssertFalse(editor.clips.first(where: { $0.id == removedID })?.isIncluded ?? true)
+
+        editor.undo()
+        XCTAssertTrue(editor.canRedo)
+        try editor.split(atEditTime: 5, minimumClipDuration: 1.0 / 30.0)
+        XCTAssertFalse(editor.canRedo)
+
+        try editor.select(removedID)
+        try editor.excludeSelected()
+        try editor.restore(removedID)
+        XCTAssertTrue(editor.clips.first(where: { $0.id == removedID })?.isIncluded ?? false)
+    }
+
+    func testEditorRejectsBoundarySplitAndOnlyClipExclusion() throws {
+        var editor = try EditorState(sourceDuration: 30)
+        XCTAssertThrowsError(try editor.split(atEditTime: 0, minimumClipDuration: 1.0 / 30.0))
+        XCTAssertThrowsError(try editor.split(atEditTime: 30, minimumClipDuration: 1.0 / 30.0))
+        XCTAssertThrowsError(try editor.excludeSelected()) { error in
+            XCTAssertEqual(error as? EditorCoreError, .cannotExcludeOnlyIncludedClip)
+        }
+    }
+
+    func testEditorStatePersistsWithProject() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let repository = try ProjectRepository(root: root)
+        var project = MatchProject(title: "Editable", source: source())
+        try project.editorState?.split(atEditTime: 25, minimumClipDuration: 1.0 / 30.0)
+        try await repository.save(project)
+
+        let loaded = try await repository.load().projects[0]
+        XCTAssertEqual(loaded.editorState, project.editorState)
+        XCTAssertEqual(loaded.editorState?.clips.count, 2)
+    }
+
+    func testLegacyProjectWithoutEditorStateStillDecodes() throws {
+        let project = MatchProject(title: "Legacy", source: source())
+        let encoded = try JSONEncoder().encode(project)
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        object.removeValue(forKey: "editorState")
+        object.removeValue(forKey: "pendingAnalysisSegments")
+
+        let decoded = try ProjectRepository.decode(JSONSerialization.data(withJSONObject: object))
+        XCTAssertNil(decoded.editorState)
+        XCTAssertEqual(decoded.title, project.title)
+    }
+
+    func testAnalysisSuggestionsRequireExplicitApplicationAndUndoRestoresManualEdit() {
+        var project = MatchProject(title: "Manual edit", source: source())
+        project.segments = [.init(start: 0, end: 100)]
+        project.edit([.init(start: 5, end: 30)])
+        project.exportFilename = "manual.mp4"
+        let manual = project.segments
+        let undoHistory = project.undoHistory
+        let suggestions = [PointSegment(start: 10, end: 20, inclusion: .needsReview, origin: .automatic)]
+
+        project.receiveAnalysis(AnalysisRecord(), suggestions: suggestions)
+        XCTAssertEqual(project.segments, manual)
+        XCTAssertEqual(project.undoHistory, undoHistory)
+        XCTAssertEqual(project.exportFilename, "manual.mp4")
+        XCTAssertEqual(project.pendingAnalysisSegments, suggestions)
+
+        XCTAssertTrue(project.applyAnalysisSuggestions())
+        XCTAssertEqual(project.segments, suggestions)
+        XCTAssertNil(project.pendingAnalysisSegments)
+        XCTAssertNil(project.exportFilename)
+        project.undo()
+        XCTAssertEqual(project.segments, manual)
+    }
+
+    func testEmptyAnalysisSuggestionsPreserveTimeline() {
+        var project = MatchProject(title: "No points", source: source())
+        project.segments = [.init(start: 0, end: 100)]
+        let before = project.segments
+        project.receiveAnalysis(AnalysisRecord(), suggestions: [])
+        XCTAssertFalse(project.applyAnalysisSuggestions())
+        XCTAssertEqual(project.segments, before)
+        XCTAssertTrue(project.undoHistory.isEmpty)
+    }
+
+    func testLegacySegmentsBecomeRestorableEditorClipsWithoutChangingDuration() throws {
+        let segments = [PointSegment(start: 10, end: 20), PointSegment(start: 40, end: 55)]
+        let edit = try EditorState.fromSegments(segments, sourceDuration: 100)
+        XCTAssertEqual(edit.totalDuration, 25)
+        XCTAssertEqual(edit.clips.map(\.isIncluded), [false, true, false, true, false])
+        XCTAssertEqual(try edit.sourceTime(atEditTime: 10), 40)
+    }
+
+    func testAcceptedSuggestionsReplaceEditorAsOneUndoableChange() throws {
+        var edit = try EditorState(sourceDuration: 100)
+        try edit.split(atEditTime: 30, minimumClipDuration: 1.0 / 30)
+        let before = edit.clips
+        try edit.replace(with: [PointSegment(start: 10, end: 20)])
+        XCTAssertEqual(edit.totalDuration, 10)
+        edit.undo()
+        XCTAssertEqual(edit.clips, before)
+    }
+
+    func testTimelineTilesRemainAdjacentAcrossSplitAndDeletion() throws {
+        XCTAssertEqual(editorTimecode(10 + 23.0 / 30, frameRate: 30), "0:10:23")
+        var edit = try EditorState(sourceDuration: 12)
+        try edit.split(atEditTime: 3, minimumClipDuration: 1.0 / 30)
+        try edit.split(atEditTime: 7, minimumClipDuration: 1.0 / 30)
+        var tiles = EditorTimelineLayout.tiles(for: edit, pointsPerSecond: 30, tileDuration: 4)
+        XCTAssertEqual(tiles.reduce(0) { $0 + $1.width }, 360, accuracy: 0.001)
+        XCTAssertEqual(tiles.first(where: { $0.clipNumber == 2 })?.editStart, 3)
+        XCTAssertEqual(tiles.first(where: { $0.clipNumber == 2 })?.clipDuration, 4)
+        XCTAssertEqual(tiles.first(where: { $0.clipNumber == 3 })?.editStart, 7)
+        XCTAssertEqual(tiles.filter { $0.tileNumber == 0 }.count, 3)
+        XCTAssertEqual(try edit.includedClip(atEditTime: 3).id, edit.includedClips[1].id)
+
+        try edit.select(edit.includedClips[1].id)
+        try edit.excludeSelected()
+        tiles = EditorTimelineLayout.tiles(for: edit, pointsPerSecond: 30, tileDuration: 4)
+        XCTAssertEqual(edit.totalDuration, 8)
+        XCTAssertEqual(tiles.reduce(0) { $0 + $1.width }, 240, accuracy: 0.001)
+        XCTAssertEqual(tiles.first(where: { $0.clipNumber == 2 })?.editStart, 3)
+        for (left, right) in zip(tiles, tiles.dropFirst()) {
+            XCTAssertEqual(left.editStart + left.duration, right.editStart, accuracy: 0.000_001)
+        }
+        XCTAssertEqual(EditorTimelineLayout.editTime(forContentOffset: 90, pointsPerSecond: 30, duration: 8), 3)
+    }
+
+    func testPreviewFitsImportedDisplayAspectRatio() {
+        let landscape = EditorPreviewLayout.size(sourceWidth: 1920, sourceHeight: 1080, maxWidth: 360, maxHeight: 300)
+        XCTAssertEqual(landscape.width, 360, accuracy: 0.001)
+        XCTAssertEqual(landscape.height, 202.5, accuracy: 0.001)
+
+        let portrait = EditorPreviewLayout.size(sourceWidth: 1080, sourceHeight: 1920, maxWidth: 360, maxHeight: 300)
+        XCTAssertEqual(portrait.width, 168.75, accuracy: 0.001)
+        XCTAssertEqual(portrait.height, 300, accuracy: 0.001)
+
+        let square = EditorPreviewLayout.size(sourceWidth: 1080, sourceHeight: 1080, maxWidth: 360, maxHeight: 300)
+        XCTAssertEqual(square.width, 300, accuracy: 0.001)
+        XCTAssertEqual(square.height, 300, accuracy: 0.001)
+    }
+
+    func testAnalysisSuggestionsPersistSeparatelyFromEdits() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let repo = try ProjectRepository(root: root)
+        var project = MatchProject(title: "Suggestions", source: source())
+        project.segments = [.init(start: 0, end: 100)]
+        project.receiveAnalysis(AnalysisRecord(), suggestions: [.init(start: 10, end: 20)])
+        try await repo.save(project)
+        let loaded = try await repo.load().projects[0]
+        XCTAssertEqual(loaded.segments, project.segments)
+        XCTAssertEqual(loaded.pendingAnalysisSegments, project.pendingAnalysisSegments)
+        XCTAssertTrue(loaded.undoHistory.isEmpty)
+    }
 }

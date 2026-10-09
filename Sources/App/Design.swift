@@ -32,21 +32,3 @@ struct WarningCard: View {
             .background(MatchStyle.lime.opacity(0.22), in: RoundedRectangle(cornerRadius: 14))
     }
 }
-
-struct SegmentTimeline: View {
-    let segments: [PointSegment]
-    let duration: Double
-    var body: some View {
-        GeometryReader { proxy in
-            ZStack(alignment: .leading) {
-                RoundedRectangle(cornerRadius: 6).fill(MatchStyle.line)
-                ForEach(segments) { segment in
-                    RoundedRectangle(cornerRadius: 3)
-                        .fill(segment.inclusion == .excluded ? MatchStyle.muted.opacity(0.25) : MatchStyle.ink)
-                        .frame(width: max(2, proxy.size.width * segment.duration / max(1, duration)))
-                        .offset(x: proxy.size.width * segment.sourceStart / max(1, duration))
-                }
-            }.clipped()
-        }.frame(height: 24).accessibilityLabel("Source timeline, \(segments.filter { $0.inclusion.isRetained }.count) retained segments")
-    }
-}

@@ -4,7 +4,7 @@ public enum ProjectStatus: String, Codable, Sendable {
     case setup, analyzing, interrupted, ready
     public var label: String {
         switch self {
-        case .setup: "Set up court"
+        case .setup: "Ready to edit"
         case .analyzing: "Finding possible points"
         case .interrupted: "Analysis paused"
         case .ready: "Ready to review"
@@ -101,16 +101,33 @@ public struct MatchProject: Identifiable, Codable, Sendable {
     public var source: SourceAssetReference
     public var courtRegion = NormalizedRect()
     public var analysis: AnalysisRecord?
+    public var pendingAnalysisSegments: [PointSegment]?
     public var segments: [PointSegment] = []
+    public var editorState: EditorState?
+    /// Nil in projects saved before the editor became the playback authority.
+    public var editorIsAuthoritative: Bool?
     public var undoHistory: [[PointSegment]] = []
     public var status: ProjectStatus = .setup
     public var warnings: [String] = []
     public var exportFilename: String?
     public init(id: UUID = UUID(), title: String, source: SourceAssetReference, createdAt: Date = Date()) {
         self.id = id; self.title = title; self.source = source; self.createdAt = createdAt
+        editorState = try? EditorState(sourceDuration: source.duration)
+        editorIsAuthoritative = true
     }
-    public var condensedDuration: Double { Timeline.ranges(segments, duration: source.duration).reduce(0) { $0 + $1.duration } }
-    public var retainedCount: Int { segments.filter { $0.inclusion.isRetained }.count }
+    public var condensedDuration: Double {
+        if editorIsAuthoritative == true, let editorState { return editorState.totalDuration }
+        return Timeline.ranges(segments, duration: source.duration).reduce(0) { $0 + $1.duration }
+    }
+    public var retainedCount: Int {
+        if editorIsAuthoritative == true, let editorState { return editorState.includedClips.count }
+        return segments.filter { $0.inclusion.isRetained }.count
+    }
+    public mutating func activateEditor() throws {
+        guard editorIsAuthoritative != true || editorState == nil else { return }
+        editorState = try EditorState.fromSegments(segments, sourceDuration: source.duration)
+        editorIsAuthoritative = true
+    }
     public mutating func edit(_ segments: [PointSegment]) {
         undoHistory.append(self.segments)
         if undoHistory.count > 30 { undoHistory.removeFirst() }
@@ -121,6 +138,22 @@ public struct MatchProject: Identifiable, Codable, Sendable {
     public mutating func undo() {
         guard let previous = undoHistory.popLast() else { return }
         segments = previous; exportFilename = nil
+    }
+    public mutating func receiveAnalysis(_ record: AnalysisRecord, suggestions: [PointSegment]) {
+        analysis = record
+        pendingAnalysisSegments = suggestions
+        status = .ready
+    }
+    @discardableResult
+    public mutating func applyAnalysisSuggestions() -> Bool {
+        guard let suggestions = pendingAnalysisSegments, !suggestions.isEmpty else { return false }
+        if editorIsAuthoritative == true {
+            do { try editorState?.replace(with: suggestions) }
+            catch { return false }
+        }
+        edit(suggestions)
+        pendingAnalysisSegments = nil
+        return true
     }
 }
 
@@ -144,4 +177,12 @@ public func timeLabel(_ seconds: Double) -> String {
     let total = max(0, Int(seconds))
     return total >= 3600 ? String(format: "%d:%02d:%02d", total / 3600, (total / 60) % 60, total % 60)
         : String(format: "%d:%02d", total / 60, total % 60)
+}
+
+public func editorTimecode(_ seconds: Double, frameRate: Double) -> String {
+    guard seconds.isFinite, frameRate.isFinite, frameRate > 0 else { return "0:00:00" }
+    let whole = max(0, Int(seconds))
+    let fps = max(1, Int(frameRate.rounded()))
+    let frame = min(fps - 1, max(0, Int(((seconds - Double(whole)) * Double(fps)).rounded())))
+    return "\(timeLabel(seconds)):\(String(format: "%02d", frame))"
 }

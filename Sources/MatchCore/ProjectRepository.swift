@@ -18,6 +18,11 @@ public actor ProjectRepository {
     }
     public func save(_ project: MatchProject) throws {
         guard project.schemaVersion == 1, project.courtRegion.isValid else { throw MatchError.incompatibleProject }
+        if let editorState = project.editorState,
+           abs(editorState.sourceDuration - project.source.duration) > 0.000_001 {
+            throw MatchError.incompatibleProject
+        }
+        try project.editorState?.validate()
         let data = try JSONEncoder().encode(project)
         let url = try directory(for: project.id).appendingPathComponent("project.json")
         try data.write(to: url, options: .atomic)
@@ -47,6 +52,12 @@ public actor ProjectRepository {
               p.source.filename == URL(fileURLWithPath: p.source.filename).lastPathComponent,
               !p.source.filename.isEmpty else { throw MatchError.incompatibleProject }
         for s in p.segments { try Timeline.validate(start: s.sourceStart, end: s.sourceEnd, duration: p.source.duration) }
+        for s in p.pendingAnalysisSegments ?? [] { try Timeline.validate(start: s.sourceStart, end: s.sourceEnd, duration: p.source.duration) }
+        if let editorState = p.editorState,
+           abs(editorState.sourceDuration - p.source.duration) > 0.000_001 {
+            throw MatchError.incompatibleProject
+        }
+        try p.editorState?.validate()
         return p
     }
     public func delete(_ id: UUID, includingMedia: Bool) throws {

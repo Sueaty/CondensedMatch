@@ -3,6 +3,78 @@ import AVFoundation
 @testable import RallyCut
 
 final class MediaTests: XCTestCase {
+    func testSplitUsesVFRPresentationTimesInsteadOfNominalFPSGrid() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let ticks: [Int64] = [0, 12, 31, 58, 92, 140, 190]
+        let source = try await makeVideo(in: directory, presentationTimes: ticks.map { CMTime(value: $0, timescale: 100) })
+        let asset = AVURLAsset(url: source)
+        let duration = try await asset.load(.duration).seconds
+        let resolver = VideoFrameBoundaryResolver()
+        let boundary = try await resolver.nearestBoundary(
+            in: source, to: 0.78, clipStart: 0, clipEnd: duration, fallbackFrameRate: 30
+        )
+        XCTAssertEqual(boundary.sourceTime, 0.92, accuracy: 0.001)
+        XCTAssertNotEqual(boundary.sourceTime, (0.78 * 30).rounded() / 30, accuracy: 0.001)
+        let tie = try await resolver.nearestBoundary(
+            in: source, to: 0.75, clipStart: 0, clipEnd: duration, fallbackFrameRate: 30
+        )
+        XCTAssertEqual(tie.sourceTime, 0.92, accuracy: 0.001)
+        var edit = try EditorState(sourceDuration: duration)
+        try edit.split(atEditTime: boundary.sourceTime, minimumClipDuration: boundary.minimumClipDuration)
+        XCTAssertEqual(edit.includedClips.count, 2)
+        XCTAssertEqual(edit.includedClips[0].sourceEnd, 0.92, accuracy: 0.001)
+        XCTAssertEqual(edit.includedClips[1].sourceStart, 0.92, accuracy: 0.001)
+    }
+
+    @MainActor
+    func testEditorSplitExcludeAndScrubKeepCompositionGapFree() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let source = try await makeVideo(in: directory)
+        let store = AppStore(root: directory.appendingPathComponent("projects"))
+        let importedID = await store.importURL(source)
+        let id = try XCTUnwrap(importedID)
+        let firstSplit = await store.updateEditor(id) { try $0.split(atEditTime: 1, minimumClipDuration: 1.0 / 30) }
+        let secondSplit = await store.updateEditor(id) { try $0.split(atEditTime: 2, minimumClipDuration: 1.0 / 30) }
+        XCTAssertTrue(firstSplit)
+        XCTAssertTrue(secondSplit)
+        let afterSplit = try XCTUnwrap(store.project(id))
+        XCTAssertEqual(afterSplit.editorState?.includedClips.count, 3)
+        XCTAssertEqual(afterSplit.condensedDuration, afterSplit.source.duration, accuracy: 0.001)
+        let middleID = try XCTUnwrap(afterSplit.editorState?.includedClips[1].id)
+        let excluded = await store.updateEditor(id) { try $0.select(middleID); try $0.excludeSelected() }
+        XCTAssertTrue(excluded)
+        let edited = try XCTUnwrap(store.project(id))
+        XCTAssertEqual(edited.editorState?.includedClips.count, 2)
+        XCTAssertEqual(edited.condensedDuration, edited.source.duration - 1, accuracy: 0.001)
+
+        let composition = try await CompositionBuilder.build(source: store.sourceURL(edited), project: edited)
+        let duration = try await composition.load(.duration)
+        XCTAssertEqual(duration.seconds, edited.condensedDuration, accuracy: 0.001)
+        let video = try await firstTrack(composition, .video)
+        let sourceSegments = try await video.load(.segments)
+        XCTAssertEqual(sourceSegments.count, 2)
+        let generator = AVAssetImageGenerator(asset: composition)
+        for time in [0.5, 1.1, edited.condensedDuration - 0.2] {
+            let (frame, _) = try await generator.image(at: CMTime(seconds: time, preferredTimescale: 600))
+            XCTAssertGreaterThan(frame.width, 0)
+        }
+
+        let playback = EditorPlayback()
+        playback.start()
+        try await playback.prepare(project: edited, source: store.sourceURL(edited))
+        playback.scrub(to: 1.5)
+        let deadline = Date().addingTimeInterval(5)
+        while abs(playback.player.currentTime().seconds - 1.5) > 0.15 && Date() < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertEqual(playback.player.currentTime().seconds, 1.5, accuracy: 0.15)
+        playback.stop()
+    }
+
     func testImportCompositionExportAndSourcePreservation() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -13,10 +85,18 @@ final class MediaTests: XCTestCase {
         var project = try await SourceAssetStore().importVideo(at: source, repository: repository)
         XCTAssertGreaterThan(project.source.duration, 3)
         XCTAssertFalse(project.source.hasAudio)
+        XCTAssertEqual(project.status, .setup)
+        XCTAssertEqual(project.segments.count, 1)
+        XCTAssertEqual(project.segments.first?.sourceStart, 0)
+        XCTAssertEqual(project.segments.first?.sourceEnd, project.source.duration)
+        XCTAssertEqual(project.condensedDuration, project.source.duration)
+        XCTAssertNil(project.analysis)
+        XCTAssertNil(project.pendingAnalysisSegments)
         project.segments = [.init(start: 2, end: 3), .init(start: 0, end: 1), .init(start: 0.5, end: 1.5)]
+        project.editorState = try EditorState.fromSegments(project.segments, sourceDuration: project.source.duration)
         let folder = try await repository.directory(for: project.id)
         let owned = folder.appendingPathComponent(project.source.filename)
-        let composition = try await CompositionBuilder.build(source: owned, segments: project.segments, duration: project.source.duration)
+        let composition = try await CompositionBuilder.build(source: owned, project: project)
         let duration = try await composition.load(.duration)
         XCTAssertEqual(duration.seconds, 2.5, accuracy: 0.01)
         let tracks = try await composition.loadTracks(withMediaType: .video)
@@ -36,6 +116,64 @@ final class MediaTests: XCTestCase {
         }
         XCTAssertEqual(try Data(contentsOf: source), original)
         XCTAssertEqual(try Data(contentsOf: owned), original)
+    }
+
+    @MainActor
+    func testImportThroughStoreIsImmediatelyPlayableWithoutAnalysis() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let source = try await makeVideo(in: directory)
+        let store = AppStore(root: directory.appendingPathComponent("projects"))
+        let importedID = await store.importURL(source)
+        let id = try XCTUnwrap(importedID)
+        let project = try XCTUnwrap(store.project(id))
+        let item = AVPlayerItem(url: store.sourceURL(project))
+        let playable = try await item.asset.load(.isPlayable)
+        XCTAssertTrue(playable)
+        XCTAssertEqual(project.segments.count, 1)
+        XCTAssertNil(store.activeAnalysisID)
+        XCTAssertNil(project.analysis)
+        let composition = try await CompositionBuilder.build(source: store.sourceURL(project), project: project)
+        let duration = try await composition.load(.duration)
+        XCTAssertEqual(duration.seconds, project.source.duration, accuracy: 0.001)
+
+        // A subsequent edit must survive relaunch even when setup/analysis is skipped.
+        await store.edit(id, segments: [.init(start: 1, end: 2)])
+        let reloaded = AppStore(root: store.root)
+        await reloaded.load()
+        let saved = try XCTUnwrap(reloaded.project(id))
+        XCTAssertEqual(saved.segments.map(\.sourceStart), [1])
+        XCTAssertEqual(saved.segments.map(\.sourceEnd), [2])
+    }
+
+    @MainActor
+    func testManualEditSurvivesAnalysisTaskAndCheckpoints() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let source = try await makeVideo(in: directory)
+        let store = AppStore(root: directory.appendingPathComponent("projects"))
+        let importedID = await store.importURL(source)
+        let id = try XCTUnwrap(importedID)
+        let manual = [PointSegment(start: 1, end: 2)]
+
+        store.analyze(id)
+        await store.edit(id, segments: manual)
+        let deadline = Date().addingTimeInterval(30)
+        while store.activeAnalysisID != nil && Date() < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertNil(store.activeAnalysisID, "Analysis did not finish in time")
+        let project = try XCTUnwrap(store.project(id))
+        XCTAssertEqual(project.segments, manual)
+        XCTAssertEqual(project.status, .ready)
+        XCTAssertNotNil(project.pendingAnalysisSegments)
+
+        let reloaded = AppStore(root: store.root)
+        await reloaded.load()
+        XCTAssertEqual(reloaded.project(id)?.segments, manual)
+        XCTAssertEqual(reloaded.project(id)?.pendingAnalysisSegments, project.pendingAnalysisSegments)
     }
 
     func testSilentAnalysisCheckpointResumeAndCancellation() async throws {
@@ -115,7 +253,8 @@ final class MediaTests: XCTestCase {
         XCTAssertFalse(analysis.0.audio.isEmpty)
         XCTAssertTrue(analysis.0.audio.allSatisfy { $0.value.isFinite && (0...1).contains($0.value) })
         project.segments = [.init(start: 0.5, end: 1.5), .init(start: 2, end: 3)]
-        let preview = try await CompositionBuilder.build(source: muxURL, segments: project.segments, duration: project.source.duration)
+        project.editorState = try EditorState.fromSegments(project.segments, sourceDuration: project.source.duration)
+        let preview = try await CompositionBuilder.build(source: muxURL, project: project)
         let previewVideo = try await firstTrack(preview, .video)
         let previewAudio = try await firstTrack(preview, .audio)
         let vt = try await previewVideo.load(.timeRange)
@@ -146,6 +285,7 @@ final class MediaTests: XCTestCase {
         let repo = try ProjectRepository(root: directory.appendingPathComponent("projects"))
         var project = try await SourceAssetStore().importVideo(at: source, repository: repo)
         project.segments = [.init(start: 0, end: 2)]
+        project.editorState = try EditorState.fromSegments(project.segments, sourceDuration: project.source.duration)
         let exporter = ExportService()
         let snapshot = project
         let task = Task { try await exporter.export(project: snapshot, source: source, folder: directory) }
@@ -162,7 +302,7 @@ final class MediaTests: XCTestCase {
         return try XCTUnwrap(tracks.first)
     }
 
-    private func makeVideo(in directory: URL) async throws -> URL {
+    private func makeVideo(in directory: URL, presentationTimes: [CMTime]? = nil) async throws -> URL {
         let url = directory.appendingPathComponent("fixture.mov")
         let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
         let input = AVAssetWriterInput(mediaType: .video, outputSettings: [AVVideoCodecKey: AVVideoCodecType.h264, AVVideoWidthKey: 320, AVVideoHeightKey: 180])
@@ -175,7 +315,8 @@ final class MediaTests: XCTestCase {
         writer.add(input)
         guard writer.startWriting() else { throw writer.error ?? MatchError.invalidMedia("Fixture writer failed") }
         writer.startSession(atSourceTime: .zero)
-        for frame in 0..<120 {
+        let times = presentationTimes ?? (0..<120).map { CMTime(value: Int64($0), timescale: 30) }
+        for (frame, presentationTime) in times.enumerated() {
             while !input.isReadyForMoreMediaData { try await Task.sleep(for: .milliseconds(2)) }
             var pixelBuffer: CVPixelBuffer?
             guard let pool = adaptor.pixelBufferPool,
@@ -190,7 +331,7 @@ final class MediaTests: XCTestCase {
                 context.fillEllipse(in: CGRect(x: 60 + (frame * 3) % 180, y: 60, width: 30, height: 30))
             }
             CVPixelBufferUnlockBaseAddress(pixelBuffer, [])
-            guard adaptor.append(pixelBuffer, withPresentationTime: CMTime(value: Int64(frame), timescale: 30)) else {
+            guard adaptor.append(pixelBuffer, withPresentationTime: presentationTime) else {
                 throw writer.error ?? MatchError.invalidMedia("Fixture append failed")
             }
         }
