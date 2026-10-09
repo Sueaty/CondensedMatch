@@ -7,7 +7,9 @@ final class AppUITests: XCTestCase {
         app.launch()
         XCTAssertTrue(app.buttons["Privacy and import guide"].waitForExistence(timeout: 10))
         let screenshot = XCTAttachment(screenshot: app.screenshot())
-        screenshot.name = "Library"; screenshot.lifetime = .keepAlways; add(screenshot)
+        screenshot.name = "Library"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
         app.buttons["Privacy and import guide"].tap()
         XCTAssertTrue(app.staticTexts["Your court.\nYour footage."].waitForExistence(timeout: 5))
         app.buttons["Done"].tap()
@@ -21,13 +23,19 @@ final class AppUITests: XCTestCase {
     @MainActor
     func testLargeTypeCreateActionsRemainReachable() {
         let app = XCUIApplication()
-        app.launchArguments = ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]
+        app.launchArguments = [
+            "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL",
+        ]
         app.launch()
         let importVideo = app.buttons["Import match video"]
         XCTAssertTrue(importVideo.waitForExistence(timeout: 10))
-        if !importVideo.isHittable { app.swipeUp() }
+        if !importVideo.isHittable {
+            app.swipeUp()
+        }
         XCTAssertTrue(importVideo.isHittable)
         let screenshot = XCTAttachment(screenshot: app.screenshot())
-        screenshot.name = "Large Type library"; screenshot.lifetime = .keepAlways; add(screenshot)
+        screenshot.name = "Large Type library"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
     }
 }

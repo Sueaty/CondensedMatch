@@ -2,9 +2,16 @@ import XCTest
 @testable import MatchCore
 
 final class MatchCoreTests: XCTestCase {
-    func source() -> SourceAssetReference { .init(filename: "source.mov", duration: 100, width: 1920, height: 1080, frameRate: 30, hasAudio: true, byteCount: 1000) }
+    func source() -> SourceAssetReference {
+        .init(
+            filename: "source.mov", duration: 100, width: 1920, height: 1080, frameRate: 30, hasAudio: true,
+            byteCount: 1000)
+    }
     func testPaddingClampsAndRejectsSingleTrigger() {
-        let input = [ActivitySample(time: 0, value: 0.8), .init(time: 1, value: 0.7), .init(time: 98, value: 0.8), .init(time: 99, value: 0.8)]
+        let input = [
+            ActivitySample(time: 0, value: 0.8), .init(time: 1, value: 0.7), .init(time: 98, value: 0.8),
+            .init(time: 99, value: 0.8),
+        ]
         let result = PointSegmenter.generate(input, duration: 100)
         XCTAssertEqual(result.count, 2)
         XCTAssertEqual(result.first?.sourceStart, 0)
@@ -12,7 +19,10 @@ final class MatchCoreTests: XCTestCase {
         XCTAssertTrue(PointSegmenter.generate([.init(time: 10, value: 1)], duration: 100).isEmpty)
     }
     func testFirstServeFaultGapMerges() {
-        let input = [ActivitySample(time: 10, value: 0.8), .init(time: 11, value: 0.8), .init(time: 21, value: 0.8), .init(time: 22, value: 0.8)]
+        let input = [
+            ActivitySample(time: 10, value: 0.8), .init(time: 11, value: 0.8), .init(time: 21, value: 0.8),
+            .init(time: 22, value: 0.8),
+        ]
         let segments = PointSegmenter.generate(input, duration: 100)
         XCTAssertEqual(segments.count, 1)
         XCTAssertEqual(segments[0].sourceStart, 8.5)
@@ -20,11 +30,18 @@ final class MatchCoreTests: XCTestCase {
         XCTAssertEqual(segments[0].inclusion, .needsReview)
     }
     func testLongDeadTimeRemainsExcluded() {
-        let input = [ActivitySample(time: 10, value: 0.8), .init(time: 12, value: 0.8), .init(time: 70, value: 0.8), .init(time: 72, value: 0.8)]
+        let input = [
+            ActivitySample(time: 10, value: 0.8), .init(time: 12, value: 0.8), .init(time: 70, value: 0.8),
+            .init(time: 72, value: 0.8),
+        ]
         XCTAssertEqual(PointSegmenter.generate(input, duration: 100).count, 2)
     }
     func testTimelineOrdersClampsAndUnionsOverlaps() {
-        let result = Timeline.ranges([.init(start: 20, end: 40), .init(start: -1, end: 25), .init(start: 35, end: 50, inclusion: .excluded), .init(start: 90, end: 110)], duration: 100)
+        let result = Timeline.ranges(
+            [
+                .init(start: 20, end: 40), .init(start: -1, end: 25),
+                .init(start: 35, end: 50, inclusion: .excluded), .init(start: 90, end: 110),
+            ], duration: 100)
         XCTAssertEqual(result.map(\.sourceStart), [0, 90])
         XCTAssertEqual(result.map(\.sourceEnd), [40, 100])
     }
@@ -44,13 +61,18 @@ final class MatchCoreTests: XCTestCase {
         XCTAssertEqual(p.segments, original)
     }
     func testVisualGateReducesOffCourtSound() {
-        let fused = ObservationFusion.combine(audio: [.init(time: 0, value: 1)], visual: [.init(time: 0, value: 0)], hasAudio: true)
+        let fused = ObservationFusion.combine(
+            audio: [.init(time: 0, value: 1)], visual: [.init(time: 0, value: 0)], hasAudio: true)
         XCTAssertLessThan(fused[0].value, SegmenterConfiguration.standard.startThreshold)
-        XCTAssertGreaterThan(ObservationFusion.combine(audio: [], visual: [.init(time: 0, value: 0.9)], hasAudio: false)[0].value, 0.5)
+        XCTAssertGreaterThan(
+            ObservationFusion.combine(audio: [], visual: [.init(time: 0, value: 0.9)], hasAudio: false)[0]
+                .value, 0.5)
     }
     func testPersistenceRelaunchAndInterruptedRecovery() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        defer { try? FileManager.default.removeItem(at: root) }
+        defer {
+            try? FileManager.default.removeItem(at: root)
+        }
         let repo = try ProjectRepository(root: root)
         var p = MatchProject(title: "Saved match", source: source())
         p.status = .analyzing
@@ -68,7 +90,9 @@ final class MatchCoreTests: XCTestCase {
     }
     func testFutureSchemaRejectedAndSourceRetainedOnMetadataDelete() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        defer { try? FileManager.default.removeItem(at: root) }
+        defer {
+            try? FileManager.default.removeItem(at: root)
+        }
         let repo = try ProjectRepository(root: root)
         var p = MatchProject(title: "Match", source: source())
         try await repo.save(p)
@@ -83,15 +107,22 @@ final class MatchCoreTests: XCTestCase {
         XCTAssertTrue(loaded.projects.isEmpty)
     }
     func testMaximumDurationAndEmptyInputs() {
-        let samples = (0..<600).map { ActivitySample(time: Double($0), value: 0.9) }
+        let samples = (0..<600).map {
+            ActivitySample(time: Double($0), value: 0.9)
+        }
         let segments = PointSegmenter.generate(samples, duration: 600)
         XCTAssertGreaterThan(segments.count, 1)
-        XCTAssertTrue(segments.allSatisfy { $0.duration <= 185 })
+        XCTAssertTrue(
+            segments.allSatisfy {
+                $0.duration <= 185
+            })
         XCTAssertTrue(PointSegmenter.generate([], duration: 100).isEmpty)
     }
     func testBenchmarkUsesIntervalUnionAndReportsUndefinedDenominators() {
-        let result = Benchmark.measure(name: "known", predicted: [.init(start: 5, end: 20), .init(start: 15, end: 25), .init(start: 70, end: 80)],
-                                       annotations: [.init(start: 10, end: 20), .init(start: 20, end: 30)], duration: 100)
+        let result = Benchmark.measure(
+            name: "known",
+            predicted: [.init(start: 5, end: 20), .init(start: 15, end: 25), .init(start: 70, end: 80)],
+            annotations: [.init(start: 10, end: 20), .init(start: 20, end: 30)], duration: 100)
         XCTAssertEqual(result.pointTimeRecall ?? -1, 0.75, accuracy: 0.0001)
         XCTAssertEqual(result.deadTimeRemoval ?? -1, 0.8125, accuracy: 0.0001)
         XCTAssertEqual(result.falseSegmentRate, 0.5)
@@ -137,7 +168,10 @@ final class MatchCoreTests: XCTestCase {
         let removedID = try XCTUnwrap(editor.selectedClipID)
         try editor.excludeSelected()
         XCTAssertEqual(editor.totalDuration, 10)
-        XCTAssertFalse(editor.clips.first(where: { $0.id == removedID })?.isIncluded ?? true)
+        XCTAssertFalse(
+            editor.clips.first(where: {
+                $0.id == removedID
+            })?.isIncluded ?? true)
 
         editor.undo()
         XCTAssertTrue(editor.canRedo)
@@ -147,7 +181,10 @@ final class MatchCoreTests: XCTestCase {
         try editor.select(removedID)
         try editor.excludeSelected()
         try editor.restore(removedID)
-        XCTAssertTrue(editor.clips.first(where: { $0.id == removedID })?.isIncluded ?? false)
+        XCTAssertTrue(
+            editor.clips.first(where: {
+                $0.id == removedID
+            })?.isIncluded ?? false)
     }
 
     func testEditorRejectsBoundarySplitAndOnlyClipExclusion() throws {
@@ -155,13 +192,16 @@ final class MatchCoreTests: XCTestCase {
         XCTAssertThrowsError(try editor.split(atEditTime: 0, minimumClipDuration: 1.0 / 30.0))
         XCTAssertThrowsError(try editor.split(atEditTime: 30, minimumClipDuration: 1.0 / 30.0))
         XCTAssertThrowsError(try editor.excludeSelected()) { error in
+
             XCTAssertEqual(error as? EditorCoreError, .cannotExcludeOnlyIncludedClip)
         }
     }
 
     func testEditorStatePersistsWithProject() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        defer { try? FileManager.default.removeItem(at: root) }
+        defer {
+            try? FileManager.default.removeItem(at: root)
+        }
         let repository = try ProjectRepository(root: root)
         var project = MatchProject(title: "Editable", source: source())
         try project.editorState?.split(atEditTime: 25, minimumClipDuration: 1.0 / 30.0)
@@ -241,35 +281,60 @@ final class MatchCoreTests: XCTestCase {
         try edit.split(atEditTime: 3, minimumClipDuration: 1.0 / 30)
         try edit.split(atEditTime: 7, minimumClipDuration: 1.0 / 30)
         var tiles = EditorTimelineLayout.tiles(for: edit, pointsPerSecond: 30, tileDuration: 4)
-        XCTAssertEqual(tiles.reduce(0) { $0 + $1.width }, 360, accuracy: 0.001)
-        XCTAssertEqual(tiles.first(where: { $0.clipNumber == 2 })?.editStart, 3)
-        XCTAssertEqual(tiles.first(where: { $0.clipNumber == 2 })?.clipDuration, 4)
-        XCTAssertEqual(tiles.first(where: { $0.clipNumber == 3 })?.editStart, 7)
-        XCTAssertEqual(tiles.filter { $0.tileNumber == 0 }.count, 3)
+        XCTAssertEqual(
+            tiles.reduce(0) {
+                $0 + $1.width
+            }, 360, accuracy: 0.001)
+        XCTAssertEqual(
+            tiles.first(where: {
+                $0.clipNumber == 2
+            })?.editStart, 3)
+        XCTAssertEqual(
+            tiles.first(where: {
+                $0.clipNumber == 2
+            })?.clipDuration, 4)
+        XCTAssertEqual(
+            tiles.first(where: {
+                $0.clipNumber == 3
+            })?.editStart, 7)
+        XCTAssertEqual(
+            tiles.filter {
+                $0.tileNumber == 0
+            }.count, 3)
         XCTAssertEqual(try edit.includedClip(atEditTime: 3).id, edit.includedClips[1].id)
 
         try edit.select(edit.includedClips[1].id)
         try edit.excludeSelected()
         tiles = EditorTimelineLayout.tiles(for: edit, pointsPerSecond: 30, tileDuration: 4)
         XCTAssertEqual(edit.totalDuration, 8)
-        XCTAssertEqual(tiles.reduce(0) { $0 + $1.width }, 240, accuracy: 0.001)
-        XCTAssertEqual(tiles.first(where: { $0.clipNumber == 2 })?.editStart, 3)
+        XCTAssertEqual(
+            tiles.reduce(0) {
+                $0 + $1.width
+            }, 240, accuracy: 0.001)
+        XCTAssertEqual(
+            tiles.first(where: {
+                $0.clipNumber == 2
+            })?.editStart, 3)
         for (left, right) in zip(tiles, tiles.dropFirst()) {
             XCTAssertEqual(left.editStart + left.duration, right.editStart, accuracy: 0.000_001)
         }
-        XCTAssertEqual(EditorTimelineLayout.editTime(forContentOffset: 90, pointsPerSecond: 30, duration: 8), 3)
+        XCTAssertEqual(
+            EditorTimelineLayout.editTime(forContentOffset: 90, pointsPerSecond: 30, duration: 8), 3)
     }
 
     func testPreviewFitsImportedDisplayAspectRatio() {
-        let landscape = EditorPreviewLayout.size(sourceWidth: 1920, sourceHeight: 1080, maxWidth: 360, maxHeight: 300)
+        let landscape = EditorPreviewLayout.size(
+            sourceWidth: 1920, sourceHeight: 1080, maxWidth: 360, maxHeight: 300)
         XCTAssertEqual(landscape.width, 360, accuracy: 0.001)
         XCTAssertEqual(landscape.height, 202.5, accuracy: 0.001)
 
-        let portrait = EditorPreviewLayout.size(sourceWidth: 1080, sourceHeight: 1920, maxWidth: 360, maxHeight: 300)
+        let portrait = EditorPreviewLayout.size(
+            sourceWidth: 1080, sourceHeight: 1920, maxWidth: 360, maxHeight: 300)
         XCTAssertEqual(portrait.width, 168.75, accuracy: 0.001)
         XCTAssertEqual(portrait.height, 300, accuracy: 0.001)
 
-        let square = EditorPreviewLayout.size(sourceWidth: 1080, sourceHeight: 1080, maxWidth: 360, maxHeight: 300)
+        let square = EditorPreviewLayout.size(
+            sourceWidth: 1080, sourceHeight: 1080, maxWidth: 360, maxHeight: 300)
         XCTAssertEqual(square.width, 300, accuracy: 0.001)
         XCTAssertEqual(square.height, 300, accuracy: 0.001)
     }
@@ -283,7 +348,9 @@ final class MatchCoreTests: XCTestCase {
 
     func testAnalysisSuggestionsPersistSeparatelyFromEdits() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        defer { try? FileManager.default.removeItem(at: root) }
+        defer {
+            try? FileManager.default.removeItem(at: root)
+        }
         let repo = try ProjectRepository(root: root)
         var project = MatchProject(title: "Suggestions", source: source())
         project.segments = [.init(start: 0, end: 100)]

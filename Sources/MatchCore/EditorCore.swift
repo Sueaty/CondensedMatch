@@ -18,7 +18,9 @@ public struct EditorClip: Identifiable, Codable, Equatable, Sendable {
         self.isIncluded = isIncluded
     }
 
-    public var duration: Double { max(0, sourceEnd - sourceStart) }
+    public var duration: Double {
+        max(0, sourceEnd - sourceStart)
+    }
 }
 
 public struct EditorSnapshot: Codable, Equatable, Sendable {
@@ -100,15 +102,28 @@ public struct EditorState: Codable, Equatable, Sendable {
         try validate()
     }
 
-    public var includedClips: [EditorClip] { clips.filter(\.isIncluded) }
-    public var totalDuration: Double { includedClips.reduce(0) { $0 + $1.duration } }
-    public var canUndo: Bool { !undoStack.isEmpty }
-    public var canRedo: Bool { !redoStack.isEmpty }
+    public var includedClips: [EditorClip] {
+        clips.filter(\.isIncluded)
+    }
+    public var totalDuration: Double {
+        includedClips.reduce(0) {
+            $0 + $1.duration
+        }
+    }
+    public var canUndo: Bool {
+        !undoStack.isEmpty
+    }
+    public var canRedo: Bool {
+        !redoStack.isEmpty
+    }
 
     /// Builds a source-ordered edit from retained ranges, keeping gaps restorable.
-    public static func fromSegments(_ segments: [PointSegment], sourceDuration: Double) throws -> EditorState {
+    public static func fromSegments(_ segments: [PointSegment], sourceDuration: Double) throws -> EditorState
+    {
         let ranges = Timeline.ranges(segments, duration: sourceDuration)
-        guard !ranges.isEmpty else { return try EditorState(sourceDuration: sourceDuration) }
+        guard !ranges.isEmpty else {
+            return try EditorState(sourceDuration: sourceDuration)
+        }
         var clips: [EditorClip] = []
         var cursor = 0.0
         for range in ranges {
@@ -121,7 +136,9 @@ public struct EditorState: Codable, Equatable, Sendable {
         if cursor < sourceDuration {
             clips.append(EditorClip(sourceStart: cursor, sourceEnd: sourceDuration, isIncluded: false))
         }
-        return try EditorState(sourceDuration: sourceDuration, clips: clips, selectedClipID: clips.first(where: \.isIncluded)?.id)
+        return try EditorState(
+            sourceDuration: sourceDuration, clips: clips, selectedClipID: clips.first(where: \.isIncluded)?.id
+        )
     }
 
     /// Replaces the retained edit as one undoable operation (for accepted AI suggestions).
@@ -138,7 +155,11 @@ public struct EditorState: Codable, Equatable, Sendable {
     }
 
     public mutating func select(_ id: EditorClip.ID?) throws {
-        if let id, !clips.contains(where: { $0.id == id }) {
+        if let id,
+            !clips.contains(where: {
+                $0.id == id
+            })
+        {
             throw EditorCoreError.clipNotFound
         }
         selectedClipID = id
@@ -185,15 +206,20 @@ public struct EditorState: Codable, Equatable, Sendable {
 
     public func editTime(atSourceTime sourceTime: Double, in clipID: EditorClip.ID) throws -> Double {
         guard sourceTime.isFinite,
-              let target = clips.first(where: { $0.id == clipID }),
-              target.isIncluded,
-              sourceTime >= target.sourceStart,
-              sourceTime <= target.sourceEnd else {
+            let target = clips.first(where: {
+                $0.id == clipID
+            }),
+            target.isIncluded,
+            sourceTime >= target.sourceStart,
+            sourceTime <= target.sourceEnd
+        else {
             throw EditorCoreError.clipNotFound
         }
         var cursor = 0.0
         for clip in includedClips {
-            if clip.id == clipID { return cursor + sourceTime - clip.sourceStart }
+            if clip.id == clipID {
+                return cursor + sourceTime - clip.sourceStart
+            }
             cursor += clip.duration
         }
         throw EditorCoreError.clipNotFound
@@ -202,7 +228,8 @@ public struct EditorState: Codable, Equatable, Sendable {
     /// Splits the retained clip under the edit playhead and selects the new right-hand clip.
     public mutating func split(atEditTime editTime: Double, minimumClipDuration: Double) throws {
         guard minimumClipDuration.isFinite, minimumClipDuration > 0,
-              editTime.isFinite, editTime > 0, editTime < totalDuration else {
+            editTime.isFinite, editTime > 0, editTime < totalDuration
+        else {
             throw EditorCoreError.invalidPlayhead
         }
 
@@ -213,7 +240,8 @@ public struct EditorState: Codable, Equatable, Sendable {
             if editTime > cursor && editTime < editEnd {
                 let sourceSplit = clip.sourceStart + editTime - cursor
                 guard sourceSplit - clip.sourceStart >= minimumClipDuration,
-                      clip.sourceEnd - sourceSplit >= minimumClipDuration else {
+                    clip.sourceEnd - sourceSplit >= minimumClipDuration
+                else {
                     throw EditorCoreError.splitAtBoundary
                 }
                 let before = snapshot
@@ -241,15 +269,27 @@ public struct EditorState: Codable, Equatable, Sendable {
 
     /// Removes the selected clip from the condensed timeline without losing its source range.
     public mutating func excludeSelected() throws {
-        guard let selectedClipID else { throw EditorCoreError.noSelectedClip }
-        guard let index = clips.firstIndex(where: { $0.id == selectedClipID }) else {
+        guard let selectedClipID else {
+            throw EditorCoreError.noSelectedClip
+        }
+        guard
+            let index = clips.firstIndex(where: {
+                $0.id == selectedClipID
+            })
+        else {
             throw EditorCoreError.clipNotFound
         }
-        guard clips[index].isIncluded else { throw EditorCoreError.noSelectedClip }
-        guard includedClips.count > 1 else { throw EditorCoreError.cannotExcludeOnlyIncludedClip }
+        guard clips[index].isIncluded else {
+            throw EditorCoreError.noSelectedClip
+        }
+        guard includedClips.count > 1 else {
+            throw EditorCoreError.cannotExcludeOnlyIncludedClip
+        }
 
         let before = snapshot
-        let joinTime = clips[..<index].filter(\.isIncluded).reduce(0) { $0 + $1.duration }
+        let joinTime = clips[..<index].filter(\.isIncluded).reduce(0) {
+            $0 + $1.duration
+        }
         clips[index].isIncluded = false
         let right = clips[(index + 1)...].first(where: \.isIncluded)
         let left = clips[..<index].last(where: \.isIncluded)
@@ -259,19 +299,29 @@ public struct EditorState: Codable, Equatable, Sendable {
     }
 
     public mutating func restore(_ id: EditorClip.ID) throws {
-        guard let index = clips.firstIndex(where: { $0.id == id }) else {
+        guard
+            let index = clips.firstIndex(where: {
+                $0.id == id
+            })
+        else {
             throw EditorCoreError.clipNotFound
         }
-        guard !clips[index].isIncluded else { throw EditorCoreError.clipAlreadyIncluded }
+        guard !clips[index].isIncluded else {
+            throw EditorCoreError.clipAlreadyIncluded
+        }
         let before = snapshot
         clips[index].isIncluded = true
         selectedClipID = id
-        playheadTime = clips[..<index].filter(\.isIncluded).reduce(0) { $0 + $1.duration }
+        playheadTime = clips[..<index].filter(\.isIncluded).reduce(0) {
+            $0 + $1.duration
+        }
         commit(before: before)
     }
 
     public mutating func undo() {
-        guard let previous = undoStack.popLast() else { return }
+        guard let previous = undoStack.popLast() else {
+            return
+        }
         redoStack.append(snapshot)
         trimHistory(&redoStack)
         restore(previous)
@@ -279,7 +329,9 @@ public struct EditorState: Codable, Equatable, Sendable {
     }
 
     public mutating func redo() {
-        guard let next = redoStack.popLast() else { return }
+        guard let next = redoStack.popLast() else {
+            return
+        }
         undoStack.append(snapshot)
         trimHistory(&undoStack)
         restore(next)
@@ -288,12 +340,16 @@ public struct EditorState: Codable, Equatable, Sendable {
 
     public func validate() throws {
         guard sourceDuration.isFinite, sourceDuration > 0,
-              !clips.isEmpty,
-              clips.contains(where: \.isIncluded),
-              playheadTime.isFinite,
-              playheadTime >= 0,
-              playheadTime <= totalDuration,
-              selectedClipID == nil || clips.contains(where: { $0.id == selectedClipID }) else {
+            !clips.isEmpty,
+            clips.contains(where: \.isIncluded),
+            playheadTime.isFinite,
+            playheadTime >= 0,
+            playheadTime <= totalDuration,
+            selectedClipID == nil
+                || clips.contains(where: {
+                    $0.id == selectedClipID
+                })
+        else {
             throw EditorCoreError.invalidTimeline
         }
 
@@ -301,11 +357,12 @@ public struct EditorState: Codable, Equatable, Sendable {
         var ids = Set<UUID>()
         for clip in clips {
             guard clip.sourceStart.isFinite,
-                  clip.sourceEnd.isFinite,
-                  clip.sourceStart >= previousEnd,
-                  clip.sourceEnd > clip.sourceStart,
-                  clip.sourceEnd <= sourceDuration,
-                  ids.insert(clip.id).inserted else {
+                clip.sourceEnd.isFinite,
+                clip.sourceStart >= previousEnd,
+                clip.sourceEnd > clip.sourceStart,
+                clip.sourceEnd <= sourceDuration,
+                ids.insert(clip.id).inserted
+            else {
                 throw EditorCoreError.invalidTimeline
             }
             previousEnd = clip.sourceEnd

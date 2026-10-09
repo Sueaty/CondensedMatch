@@ -11,7 +11,9 @@ public struct EditorTimelineTile: Identifiable, Equatable, Sendable {
     public let clipDuration: Double
     public let width: Double
 
-    public var id: String { "\(clipID.uuidString)-\(tileNumber)" }
+    public var id: String {
+        "\(clipID.uuidString)-\(tileNumber)"
+    }
 }
 
 public enum EditorTimelineLayout {
@@ -22,7 +24,10 @@ public enum EditorTimelineLayout {
         tileDuration: Double
     ) -> [EditorTimelineTile] {
         guard pointsPerSecond.isFinite, pointsPerSecond > 0,
-              tileDuration.isFinite, tileDuration > 0 else { return [] }
+            tileDuration.isFinite, tileDuration > 0
+        else {
+            return []
+        }
         var tiles: [EditorTimelineTile] = []
         var editCursor = 0.0
         for (index, clip) in editor.includedClips.enumerated() {
@@ -30,26 +35,32 @@ public enum EditorTimelineLayout {
             for tileNumber in 0..<count {
                 let offset = Double(tileNumber) * tileDuration
                 let duration = min(tileDuration, clip.duration - offset)
-                tiles.append(EditorTimelineTile(
-                    clipID: clip.id,
-                    clipNumber: index + 1,
-                    tileNumber: tileNumber,
-                    isLastInClip: tileNumber == count - 1,
-                    sourceTime: clip.sourceStart + offset,
-                    editStart: editCursor + offset,
-                    duration: duration,
-                    clipDuration: clip.duration,
-                    width: duration * pointsPerSecond
-                ))
+                tiles.append(
+                    EditorTimelineTile(
+                        clipID: clip.id,
+                        clipNumber: index + 1,
+                        tileNumber: tileNumber,
+                        isLastInClip: tileNumber == count - 1,
+                        sourceTime: clip.sourceStart + offset,
+                        editStart: editCursor + offset,
+                        duration: duration,
+                        clipDuration: clip.duration,
+                        width: duration * pointsPerSecond
+                    ))
             }
             editCursor += clip.duration
         }
         return tiles
     }
 
-    public static func editTime(forContentOffset offset: Double, pointsPerSecond: Double, duration: Double) -> Double {
+    public static func editTime(forContentOffset offset: Double, pointsPerSecond: Double, duration: Double)
+        -> Double
+    {
         guard offset.isFinite, pointsPerSecond.isFinite, pointsPerSecond > 0,
-              duration.isFinite, duration >= 0 else { return 0 }
+            duration.isFinite, duration >= 0
+        else {
+            return 0
+        }
         return min(duration, max(0, offset / pointsPerSecond))
     }
 }
@@ -61,11 +72,14 @@ public struct EditorPreviewSize: Equatable, Sendable {
 
 public enum EditorPreviewLayout {
     /// Fits the imported video's display dimensions within the available preview area.
-    public static func size(sourceWidth: Int, sourceHeight: Int, maxWidth: Double, maxHeight: Double) -> EditorPreviewSize {
+    public static func size(sourceWidth: Int, sourceHeight: Int, maxWidth: Double, maxHeight: Double)
+        -> EditorPreviewSize
+    {
         guard maxWidth.isFinite, maxHeight.isFinite, maxWidth > 0, maxHeight > 0 else {
             return EditorPreviewSize(width: 0, height: 0)
         }
-        let aspect = sourceWidth > 0 && sourceHeight > 0
+        let aspect =
+            sourceWidth > 0 && sourceHeight > 0
             ? Double(sourceWidth) / Double(sourceHeight) : 16.0 / 9.0
         let width = min(maxWidth, maxHeight * aspect)
         return EditorPreviewSize(width: width, height: width / aspect)

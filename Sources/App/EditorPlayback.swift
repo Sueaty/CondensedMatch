@@ -17,15 +17,26 @@ final class EditorPlayback {
     private var duration = 0.0
 
     func start() {
-        guard timeObserver == nil else { return }
+        guard timeObserver == nil else {
+            return
+        }
         timeObserver = player.addPeriodicTimeObserver(
             forInterval: CMTime(seconds: 1.0 / 30.0, preferredTimescale: 600), queue: .main
-        ) { [weak self] time in
-            Task { @MainActor [weak self] in
+        ) {
+            [weak self] time in
+
+            Task {
+                @MainActor [weak self] in
+
                 guard let self, self.timeObserver != nil, !self.seekInFlight,
-                      self.pendingSeek == nil, time.seconds.isFinite else { return }
+                    self.pendingSeek == nil, time.seconds.isFinite
+                else {
+                    return
+                }
                 self.position = min(self.duration, max(0, time.seconds))
-                if self.isPlaying && self.position >= self.duration - 0.05 { self.isPlaying = false }
+                if self.isPlaying && self.position >= self.duration - 0.05 {
+                    self.isPlaying = false
+                }
             }
         }
     }
@@ -41,7 +52,9 @@ final class EditorPlayback {
         position = min(project.editorState?.playheadTime ?? 0, duration)
         do {
             let composition = try await CompositionBuilder.build(source: source, project: project)
-            guard request == generation else { return }
+            guard request == generation else {
+                return
+            }
             let target = pendingSeek ?? position
             pendingSeek = nil
             seekInFlight = false
@@ -50,7 +63,9 @@ final class EditorPlayback {
             isPreparing = false
             scrub(to: target)
         } catch {
-            if request == generation { isPreparing = false }
+            if request == generation {
+                isPreparing = false
+            }
             throw error
         }
     }
@@ -64,7 +79,9 @@ final class EditorPlayback {
     }
 
     private func performPendingSeek() {
-        guard isReady, !seekInFlight, let target = pendingSeek else { return }
+        guard isReady, !seekInFlight, let target = pendingSeek else {
+            return
+        }
         pendingSeek = nil
         seekInFlight = true
         let request = generation
@@ -72,9 +89,15 @@ final class EditorPlayback {
         player.seek(
             to: CMTime(seconds: target, preferredTimescale: 60_000),
             toleranceBefore: tolerance, toleranceAfter: tolerance
-        ) { [weak self] _ in
-            Task { @MainActor [weak self] in
-                guard let self, request == self.generation else { return }
+        ) {
+            [weak self] _ in
+
+            Task {
+                @MainActor [weak self] in
+
+                guard let self, request == self.generation else {
+                    return
+                }
                 self.seekInFlight = false
                 self.performPendingSeek()
             }
@@ -82,10 +105,15 @@ final class EditorPlayback {
     }
 
     func togglePlayback() {
-        guard isReady else { return }
-        if isPlaying { pause() }
-        else {
-            if position >= duration - 0.05 { scrub(to: 0) }
+        guard isReady else {
+            return
+        }
+        if isPlaying {
+            pause()
+        } else {
+            if position >= duration - 0.05 {
+                scrub(to: 0)
+            }
             player.play()
             isPlaying = true
         }
@@ -99,7 +127,9 @@ final class EditorPlayback {
     func stop() {
         generation &+= 1
         pause()
-        if let timeObserver { player.removeTimeObserver(timeObserver) }
+        if let timeObserver {
+            player.removeTimeObserver(timeObserver)
+        }
         timeObserver = nil
         player.replaceCurrentItem(with: nil)
         isReady = false
@@ -124,6 +154,10 @@ struct EditorVideoSurface: UIViewRepresentable {
 }
 
 final class PlayerSurfaceView: UIView {
-    override static var layerClass: AnyClass { AVPlayerLayer.self }
-    var playerLayer: AVPlayerLayer { layer as! AVPlayerLayer }
+    override static var layerClass: AnyClass {
+        AVPlayerLayer.self
+    }
+    var playerLayer: AVPlayerLayer {
+        layer as! AVPlayerLayer
+    }
 }

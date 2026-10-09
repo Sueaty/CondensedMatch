@@ -29,7 +29,8 @@ actor VideoFrameBoundaryResolver {
         fallbackFrameRate: Double
     ) async throws -> ResolvedFrameBoundary {
         guard candidate.isFinite, clipStart.isFinite, clipEnd.isFinite,
-              clipStart < candidate, candidate < clipEnd else {
+            clipStart < candidate, candidate < clipEnd
+        else {
             throw FrameBoundaryError.noInteriorFrame
         }
         let asset = AVURLAsset(url: source)
@@ -52,6 +53,7 @@ actor VideoFrameBoundaryResolver {
                 $0 > clipStart + minimum && $0 < clipEnd - minimum
             }
             if let nearest = valid.min(by: { left, right in
+
                 let leftDistance = abs(left - candidate)
                 let rightDistance = abs(right - candidate)
                 return abs(leftDistance - rightDistance) < 0.000_000_001
@@ -69,7 +71,9 @@ actor VideoFrameBoundaryResolver {
         start: Double,
         end: Double
     ) throws -> [Double] {
-        guard end > start else { return [] }
+        guard end > start else {
+            return []
+        }
         let reader = try AVAssetReader(asset: asset)
         let output = AVAssetReaderTrackOutput(track: track, outputSettings: nil)
         reader.add(output)
@@ -77,18 +81,25 @@ actor VideoFrameBoundaryResolver {
             start: CMTime(seconds: start, preferredTimescale: 60_000),
             end: CMTime(seconds: end, preferredTimescale: 60_000)
         )
-        guard reader.startReading() else { throw reader.error ?? FrameBoundaryError.readerFailed }
+        guard reader.startReading() else {
+            throw reader.error ?? FrameBoundaryError.readerFailed
+        }
         var stamps: [Double] = []
         while let buffer = output.copyNextSampleBuffer() {
             try Task.checkCancellation()
             for index in 0..<max(1, buffer.numSamples) {
-                let stamp = (try? buffer.sampleTimingInfo(at: index).presentationTimeStamp)
+                let stamp =
+                    (try? buffer.sampleTimingInfo(at: index).presentationTimeStamp)
                     ?? buffer.presentationTimeStamp
                 let time = stamp.seconds
-                if time.isFinite, time >= start, time <= end { stamps.append(time) }
+                if time.isFinite, time >= start, time <= end {
+                    stamps.append(time)
+                }
             }
         }
-        if reader.status == .failed { throw reader.error ?? FrameBoundaryError.readerFailed }
+        if reader.status == .failed {
+            throw reader.error ?? FrameBoundaryError.readerFailed
+        }
         return stamps
     }
 }

@@ -26,32 +26,45 @@ struct EditorTimeline: View {
                     .font(.system(.headline, design: .monospaced))
                     .accessibilityIdentifier("editor-playback-time")
                 Spacer()
-                Text(timeLabel(editor.totalDuration)).font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                Text(timeLabel(editor.totalDuration))
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(
+                        .secondary)
             }
             ScrollView(.horizontal) {
                 LazyHStack(spacing: 0) {
-                    Color.clear.frame(width: viewportWidth / 2, height: 76)
+                    Color.clear
+                        .frame(width: viewportWidth / 2, height: 76)
                     ForEach(tiles) { info in
+
                         TimelineTile(
                             info: info,
                             selected: editor.selectedClipID == info.clipID,
                             provider: provider,
-                            onSelect: { onSelect(info.clipID) }
+                            onSelect: {
+                                onSelect(info.clipID)
+                            }
                         )
                     }
-                    Color.clear.frame(width: viewportWidth / 2, height: 76)
+                    Color.clear
+                        .frame(width: viewportWidth / 2, height: 76)
                 }
             }
             .scrollIndicators(.hidden)
             .scrollPosition($scrollPosition)
             .onScrollGeometryChange(for: Double.self) { geometry in
+
                 geometry.contentOffset.x
             } action: { _, offset in
+
                 currentOffset = offset
-                guard isUserScrolling else { return }
+                guard isUserScrolling else {
+                    return
+                }
                 onScrub(time(for: offset))
             }
             .onScrollPhaseChange { _, phase in
+
                 switch phase {
                 case .interacting, .decelerating:
                     isUserScrolling = true
@@ -64,14 +77,21 @@ struct EditorTimeline: View {
                 }
             }
             .overlay {
-                Rectangle().fill(MatchStyle.lime).frame(width: 3, height: 90)
+                Rectangle().fill(MatchStyle.lime)
+                    .frame(width: 3, height: 90)
                     .shadow(color: .black.opacity(0.5), radius: 2)
                     .allowsHitTesting(false)
             }
             .background {
                 GeometryReader { proxy in
-                    Color.clear.onAppear { viewportWidth = proxy.size.width }
-                        .onChange(of: proxy.size.width) { _, width in viewportWidth = width }
+
+                    Color.clear
+                        .onAppear {
+                            viewportWidth = proxy.size.width
+                        }
+                        .onChange(of: proxy.size.width) { _, width in
+                            viewportWidth = width
+                        }
                 }
             }
             .frame(height: 90)
@@ -83,10 +103,14 @@ struct EditorTimeline: View {
             scrollPosition.scrollTo(x: position * pointsPerSecond)
         }
         .onChange(of: position) { _, newValue in
-            guard !isUserScrolling else { return }
+
+            guard !isUserScrolling else {
+                return
+            }
             scrollPosition.scrollTo(x: newValue * pointsPerSecond)
         }
         .onChange(of: editor.revision) { _, _ in
+
             tiles = makeTiles()
             scrollPosition.scrollTo(x: editor.playheadTime * pointsPerSecond)
         }
@@ -94,7 +118,8 @@ struct EditorTimeline: View {
     }
 
     private func time(for offset: Double) -> Double {
-        EditorTimelineLayout.editTime(forContentOffset: offset, pointsPerSecond: pointsPerSecond, duration: editor.totalDuration)
+        EditorTimelineLayout.editTime(
+            forContentOffset: offset, pointsPerSecond: pointsPerSecond, duration: editor.totalDuration)
     }
 
     private func makeTiles() -> [EditorTimelineTile] {
@@ -112,9 +137,12 @@ private struct TimelineTile: View {
     var body: some View {
         ZStack(alignment: .bottomLeading) {
             if let image {
-                Image(uiImage: image).resizable().scaledToFill()
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFill()
             } else {
-                MatchStyle.ink.opacity(info.clipNumber.isMultiple(of: 2) ? 0.85 : 1)
+                MatchStyle.ink
+                    .opacity(info.clipNumber.isMultiple(of: 2) ? 0.85 : 1)
             }
             if info.tileNumber == 0 && info.width >= 100 {
                 Text(timeLabel(info.clipDuration))
@@ -124,26 +152,41 @@ private struct TimelineTile: View {
                     .padding(.horizontal, 5)
                     .padding(.vertical, 3)
                     .background(.black.opacity(0.6), in: RoundedRectangle(cornerRadius: 4))
-                    .foregroundStyle(.white).padding(4)
+                    .foregroundStyle(.white)
+                    .padding(4)
             }
         }
         .frame(width: info.width, height: 76)
         .clipped()
         .overlay(alignment: .leading) {
-            if info.tileNumber == 0 { Rectangle().fill(selected ? MatchStyle.lime : .white).frame(width: 3) }
+            if info.tileNumber == 0 {
+                Rectangle().fill(selected ? MatchStyle.lime : .white)
+                    .frame(width: 3)
+            }
         }
         .overlay(alignment: .trailing) {
-            if info.isLastInClip { Rectangle().fill(selected ? MatchStyle.lime : .white).frame(width: 3) }
+            if info.isLastInClip {
+                Rectangle().fill(selected ? MatchStyle.lime : .white)
+                    .frame(width: 3)
+            }
         }
         .overlay(alignment: .top) {
-            if selected { Rectangle().fill(MatchStyle.lime).frame(height: 3) }
+            if selected {
+                Rectangle().fill(MatchStyle.lime)
+                    .frame(height: 3)
+            }
         }
         .overlay(alignment: .bottom) {
-            if selected { Rectangle().fill(MatchStyle.lime).frame(height: 3) }
+            if selected {
+                Rectangle().fill(MatchStyle.lime)
+                    .frame(height: 3)
+            }
         }
         .contentShape(Rectangle())
         .onTapGesture(perform: onSelect)
-        .task(id: info.sourceTime) { image = await provider?.image(at: info.sourceTime) }
+        .task(id: info.sourceTime) {
+            image = await provider?.image(at: info.sourceTime)
+        }
     }
 }
 
@@ -152,18 +195,26 @@ final class TimelineThumbnailProvider {
     private let asset: AVURLAsset
     private let cache = NSCache<NSNumber, UIImage>()
 
-    init(source: URL) { asset = AVURLAsset(url: source) }
+    init(source: URL) {
+        asset = AVURLAsset(url: source)
+    }
 
     func image(at time: Double) async -> UIImage? {
         let key = NSNumber(value: Int((time * 10).rounded()))
-        if let cached = cache.object(forKey: key) { return cached }
+        if let cached = cache.object(forKey: key) {
+            return cached
+        }
         let generator = AVAssetImageGenerator(asset: asset)
         generator.appliesPreferredTrackTransform = true
         generator.maximumSize = CGSize(width: 240, height: 140)
         generator.requestedTimeToleranceBefore = CMTime(seconds: 0.5, preferredTimescale: 600)
         generator.requestedTimeToleranceAfter = CMTime(seconds: 0.5, preferredTimescale: 600)
-        guard let (cgImage, _) = try? await generator.image(at: CMTime(seconds: time, preferredTimescale: 600)),
-              !Task.isCancelled else { return nil }
+        guard
+            let (cgImage, _) = try? await generator.image(at: CMTime(seconds: time, preferredTimescale: 600)),
+            !Task.isCancelled
+        else {
+            return nil
+        }
         let result = UIImage(cgImage: cgImage)
         cache.setObject(result, forKey: key)
         return result

@@ -11,8 +11,10 @@ enum MatchStyle {
 struct PrimaryButton: ButtonStyle {
     var dark = false
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label.font(.system(.body, design: .rounded, weight: .semibold))
-            .frame(maxWidth: .infinity).padding(.vertical, 17)
+        configuration.label
+            .font(.system(.body, design: .rounded, weight: .semibold))
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 17)
             .foregroundStyle(dark ? .white : MatchStyle.ink)
             .background(dark ? MatchStyle.ink : MatchStyle.lime, in: RoundedRectangle(cornerRadius: 18))
             .opacity(configuration.isPressed ? 0.7 : 1)
@@ -21,14 +23,22 @@ struct PrimaryButton: ButtonStyle {
 
 struct Eyebrow: View {
     let title: String
-    var body: some View { Text(title.uppercased()).font(.system(size: 10, weight: .bold, design: .monospaced)).tracking(2).foregroundStyle(MatchStyle.muted) }
+    var body: some View {
+        Text(title.uppercased())
+            .font(.system(size: 10, weight: .bold, design: .monospaced))
+            .tracking(2)
+            .foregroundStyle(MatchStyle.muted)
+    }
 }
 
 struct WarningCard: View {
     let text: String
     var body: some View {
-        Label(text, systemImage: "info.circle").font(.footnote).foregroundStyle(MatchStyle.ink)
-            .padding(14).frame(maxWidth: .infinity, alignment: .leading)
+        Label(text, systemImage: "info.circle")
+            .font(.footnote)
+            .foregroundStyle(MatchStyle.ink)
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
             .background(MatchStyle.lime.opacity(0.22), in: RoundedRectangle(cornerRadius: 14))
     }
 }

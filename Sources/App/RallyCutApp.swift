@@ -9,8 +9,11 @@ struct RallyCutApp: App {
             LibraryView(store: store)
                 .tint(MatchStyle.ink)
                 .preferredColorScheme(.light)
-                .task { await store.load() }
+                .task {
+                    await store.load()
+                }
                 .onChange(of: scenePhase) { _, phase in
+
                     if phase == .background {
                         store.pauseAnalysis()
                     }
