@@ -79,7 +79,7 @@ struct EditorTimeline: View {
                 }
             }
             .overlay {
-                Rectangle().fill(MatchStyle.lime)
+                Rectangle().fill(MatchColor.lime)
                     .frame(width: 3, height: 90)
                     .shadow(color: .black.opacity(0.5), radius: 2)
                     .allowsHitTesting(false)
@@ -97,7 +97,7 @@ struct EditorTimeline: View {
                 }
             }
             .frame(height: 90)
-            .background(MatchStyle.ink.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
+            .background(MatchColor.ink.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
         }
         .onAppear {
             provider = TimelineThumbnailProvider(source: sourceURL)
@@ -143,7 +143,7 @@ private struct TimelineTile: View {
                     .resizable()
                     .scaledToFill()
             } else {
-                MatchStyle.ink
+                MatchColor.ink
                     .opacity(info.clipNumber.isMultiple(of: 2) ? 0.85 : 1)
             }
             if info.tileNumber == 0 && info.width >= 100 {
@@ -164,25 +164,25 @@ private struct TimelineTile: View {
         .clipped()
         .overlay(alignment: .leading) {
             if info.tileNumber == 0 {
-                Rectangle().fill(selected ? MatchStyle.lime : .white)
+                Rectangle().fill(selected ? MatchColor.lime : .white)
                     .frame(width: 3)
             }
         }
         .overlay(alignment: .trailing) {
             if info.isLastInClip {
-                Rectangle().fill(selected ? MatchStyle.lime : .white)
+                Rectangle().fill(selected ? MatchColor.lime : .white)
                     .frame(width: 3)
             }
         }
         .overlay(alignment: .top) {
             if selected {
-                Rectangle().fill(MatchStyle.lime)
+                Rectangle().fill(MatchColor.lime)
                     .frame(height: 3)
             }
         }
         .overlay(alignment: .bottom) {
             if selected {
-                Rectangle().fill(MatchStyle.lime)
+                Rectangle().fill(MatchColor.lime)
                     .frame(height: 3)
             }
         }

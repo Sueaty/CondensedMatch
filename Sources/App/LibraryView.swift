@@ -41,7 +41,7 @@ struct LibraryView: View {
                             .fixedSize(horizontal: false, vertical: true)
                         Text("Turn a full match into a match worth rewatching.")
                             .typography(.body)
-                            .foregroundStyle(MatchStyle.muted)
+                            .foregroundStyle(MatchColor.muted)
                     }
                     CourtArtwork()
                         .frame(height: 202)
@@ -65,7 +65,7 @@ struct LibraryView: View {
                             ProgressView(value: store.importProgress)
                             Text("A video stored in iCloud may need to download first.")
                                 .typography(.caption)
-                                .foregroundStyle(MatchStyle.muted)
+                                .foregroundStyle(MatchColor.muted)
                         }
                         .padding()
                         .background(.white, in: RoundedRectangle(cornerRadius: 18))
@@ -81,7 +81,7 @@ struct LibraryView: View {
                             Text(String(format: "%02d", store.projects.count))
                                 .typography(.caption)
                                 .monospaced()
-                                .foregroundStyle(MatchStyle.muted)
+                                .foregroundStyle(MatchColor.muted)
                         }
                         if store.projects.isEmpty {
                             VStack(alignment: .leading, spacing: 12) {
@@ -90,7 +90,7 @@ struct LibraryView: View {
                                     .fontWeight(.semibold)
                                 Text("Bring in a match video from Photos. Your original always stays intact.")
                                     .typography(.body)
-                                    .foregroundStyle(MatchStyle.muted)
+                                    .foregroundStyle(MatchColor.muted)
                                     .fixedSize(
                                         horizontal: false, vertical: true)
                                 HStack(spacing: 16) {
@@ -98,14 +98,14 @@ struct LibraryView: View {
                                     Label("No account", systemImage: "person.crop.circle.badge.checkmark")
                                 }
                                 .typography(.caption)
-                                .foregroundStyle(MatchStyle.muted)
+                                .foregroundStyle(MatchColor.muted)
                             }
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(22)
                             .background(.white.opacity(0.5), in: RoundedRectangle(cornerRadius: 20))
                             .overlay(
                                 RoundedRectangle(cornerRadius: 20).strokeBorder(
-                                    MatchStyle.line, style: StrokeStyle(lineWidth: 1, dash: [5])))
+                                    MatchColor.line, style: StrokeStyle(lineWidth: 1, dash: [5])))
                         } else {
                             ForEach(store.projects) { project in
                                 NavigationLink(value: project.id) {
@@ -126,15 +126,15 @@ struct LibraryView: View {
                         Text("Your footage stays on your iPhone.")
                     }
                     .typography(.caption)
-                    .foregroundStyle(MatchStyle.muted)
+                    .foregroundStyle(MatchColor.muted)
                     .frame(maxWidth: .infinity)
                     .padding(
                         .bottom, 12)
                 }
                 .padding(.horizontal, 24)
             }
-            .background(MatchStyle.paper)
-            .foregroundStyle(MatchStyle.ink)
+            .background(MatchColor.paper)
+            .foregroundStyle(MatchColor.ink)
             .toolbar(.hidden, for: .navigationBar)
             .navigationDestination(for: UUID.self) {
                 id in ProjectView(store: store, id: id)
@@ -224,9 +224,9 @@ struct ProjectCard: View {
                         .resizable()
                         .scaledToFill()
                 } else {
-                    Rectangle().fill(MatchStyle.ink)
+                    Rectangle().fill(MatchColor.ink)
                         .overlay(
-                            Image(systemName: "tennisball").foregroundStyle(MatchStyle.lime))
+                            Image(systemName: "tennisball").foregroundStyle(MatchColor.lime))
                 }
             }
             .frame(width: 90, height: 90)
@@ -238,7 +238,7 @@ struct ProjectCard: View {
                     .lineLimit(2)
                 Text(project.createdAt.formatted(date: .abbreviated, time: .omitted))
                     .typography(.caption)
-                    .foregroundStyle(MatchStyle.muted)
+                    .foregroundStyle(MatchColor.muted)
                 Text(
                     project.status == .ready
                         ? "\(timeLabel(project.source.duration)) → \(timeLabel(project.condensedDuration))"
@@ -251,12 +251,12 @@ struct ProjectCard: View {
                     .bold()
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)
-                    .background(MatchStyle.lime.opacity(0.35), in: Capsule())
+                    .background(MatchColor.lime.opacity(0.35), in: Capsule())
             }
             Spacer(minLength: 0)
             Image(systemName: "chevron.right")
                 .typography(.caption)
-                .foregroundStyle(MatchStyle.muted)
+                .foregroundStyle(MatchColor.muted)
         }
         .padding(12)
         .background(.white.opacity(0.75), in: RoundedRectangle(cornerRadius: 22))
@@ -290,12 +290,12 @@ struct PrivacyView: View {
                         "Current input limit: 1 second–4 hours. Use H.264 or HEVC video up to 4K where possible. Device performance and detection accuracy have not been benchmarked."
                     )
                     .typography(.caption)
-                    .foregroundStyle(MatchStyle.muted)
+                    .foregroundStyle(MatchColor.muted)
                 }
                 .padding(28)
             }
-            .background(MatchStyle.paper)
-            .foregroundStyle(MatchStyle.ink)
+            .background(MatchColor.paper)
+            .foregroundStyle(MatchColor.ink)
             .navigationTitle(
                 "A little peace of mind"
             )

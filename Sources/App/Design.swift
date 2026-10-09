@@ -1,13 +1,5 @@
 import SwiftUI
 
-enum MatchStyle {
-    static let paper = Color(red: 0.96, green: 0.96, blue: 0.92)
-    static let ink = Color(red: 0.10, green: 0.20, blue: 0.16)
-    static let muted = Color(red: 0.37, green: 0.42, blue: 0.37)
-    static let lime = Color(red: 0.81, green: 0.93, blue: 0.37)
-    static let line = Color(red: 0.84, green: 0.86, blue: 0.81)
-}
-
 struct PrimaryButton: ButtonStyle {
     var dark = false
     func makeBody(configuration: Configuration) -> some View {
@@ -16,8 +8,8 @@ struct PrimaryButton: ButtonStyle {
             .bold()
             .frame(maxWidth: .infinity)
             .padding(.vertical, 17)
-            .foregroundStyle(dark ? .white : MatchStyle.ink)
-            .background(dark ? MatchStyle.ink : MatchStyle.lime, in: RoundedRectangle(cornerRadius: 18))
+            .foregroundStyle(dark ? .white : MatchColor.ink)
+            .background(dark ? MatchColor.ink : MatchColor.lime, in: RoundedRectangle(cornerRadius: 18))
             .opacity(configuration.isPressed ? 0.7 : 1)
     }
 }
@@ -29,7 +21,7 @@ struct Eyebrow: View {
             .typography(.caption)
             .bold()
             .tracking(2)
-            .foregroundStyle(MatchStyle.muted)
+            .foregroundStyle(MatchColor.muted)
     }
 }
 
@@ -38,9 +30,9 @@ struct WarningCard: View {
     var body: some View {
         Label(text, systemImage: "info.circle")
             .typography(.caption)
-            .foregroundStyle(MatchStyle.ink)
+            .foregroundStyle(MatchColor.ink)
             .padding(14)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(MatchStyle.lime.opacity(0.22), in: RoundedRectangle(cornerRadius: 14))
+            .background(MatchColor.lime.opacity(0.22), in: RoundedRectangle(cornerRadius: 14))
     }
 }

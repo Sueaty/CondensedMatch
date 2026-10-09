@@ -7,7 +7,7 @@ struct RallyCutApp: App {
     var body: some Scene {
         WindowGroup {
             LibraryView(store: store)
-                .tint(MatchStyle.ink)
+                .tint(MatchColor.ink)
                 .preferredColorScheme(.light)
                 .task {
                     await store.load()

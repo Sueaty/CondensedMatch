@@ -1,0 +1,16 @@
+//
+//  MatchColor.swift
+//  RallyCut
+//
+//  Created by 조수정 on 10/10/26.
+//
+
+import SwiftUI
+
+enum MatchColor {
+    static let paper = Color(red: 0.96, green: 0.96, blue: 0.92)
+    static let ink = Color(red: 0.10, green: 0.20, blue: 0.16)
+    static let muted = Color(red: 0.37, green: 0.42, blue: 0.37)
+    static let lime = Color(red: 0.81, green: 0.93, blue: 0.37)
+    static let line = Color(red: 0.84, green: 0.86, blue: 0.81)
+}

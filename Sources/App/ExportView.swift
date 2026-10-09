@@ -34,7 +34,7 @@ struct ExportView: View {
                                 "Video is re-encoded for sharing. Source orientation is preserved; the encoder may adjust dimensions for compatibility. Audio is carried across with each segment."
                             )
                             .typography(.caption)
-                            .foregroundStyle(MatchStyle.muted)
+                            .foregroundStyle(MatchColor.muted)
                             LabeledContent(
                                 "Space allowance",
                                 value: ByteCountFormatter.string(
@@ -43,7 +43,7 @@ struct ExportView: View {
                                 "A conservative allowance, not a predicted file size. Keep this screen open during export."
                             )
                             .typography(.caption)
-                            .foregroundStyle(MatchStyle.muted)
+                            .foregroundStyle(MatchColor.muted)
                         }
                         .padding(20)
                         .background(.white.opacity(0.75), in: RoundedRectangle(cornerRadius: 18))
@@ -91,8 +91,8 @@ struct ExportView: View {
                     }
                     .padding(24)
                 }
-                .background(MatchStyle.paper)
-                .foregroundStyle(MatchStyle.ink)
+                .background(MatchColor.paper)
+                .foregroundStyle(MatchColor.ink)
                 .navigationTitle("Export match")
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {

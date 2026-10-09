@@ -24,10 +24,9 @@ struct CourtArtwork: View {
 
             ZStack {
                 RoundedRectangle(cornerRadius: 24)
-                    .fill(MatchStyle.ink)
+                    .fill(MatchColor.ink)
 
                 Path { path in
-
                     path.addRect(CGRect(x: left, y: top, width: right - left, height: bottom - top))
                     path.move(to: CGPoint(x: left, y: singlesTop))
                     path.addLine(to: CGPoint(x: right, y: singlesTop))
@@ -62,11 +61,11 @@ struct CourtArtwork: View {
                     )
                 }
                 .stroke(
-                    MatchStyle.lime.opacity(0.8),
+                    MatchColor.lime.opacity(0.8),
                     style: StrokeStyle(lineWidth: 2, lineCap: .round, dash: [5, 6]))
 
                 Circle()
-                    .fill(MatchStyle.lime)
+                    .fill(MatchColor.lime)
                     .frame(width: 15, height: 15)
                     .position(x: right - courtWidth * 0.14, y: singlesTop)
 

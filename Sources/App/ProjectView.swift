@@ -20,8 +20,8 @@ struct ProjectView: View {
                 ContentUnavailableView("Project unavailable", systemImage: "video.slash")
             }
         }
-        .background(MatchStyle.paper)
-        .foregroundStyle(MatchStyle.ink)
+        .background(MatchColor.paper)
+        .foregroundStyle(MatchColor.ink)
         .navigationTitle(store.project(id)?.title ?? "Match")
         .navigationBarTitleDisplayMode(.inline)
     }
@@ -45,7 +45,7 @@ struct CourtSetupView: View {
                     "Frame the entire court to focus detection on your match. Include both baselines and both players."
                 )
                 .typography(.body)
-                .foregroundStyle(MatchStyle.muted)
+                .foregroundStyle(MatchColor.muted)
                 GeometryReader { proxy in
 
                     ZStack(alignment: .topLeading) {
@@ -54,15 +54,15 @@ struct CourtSetupView: View {
                                 .resizable()
                                 .scaledToFit()
                         } else {
-                            MatchStyle.ink
+                            MatchColor.ink
                                 .overlay(
                                     Text(
                                         "Thumbnail unavailable. Use the full frame or adjust the region below."
                                     )
                                     .foregroundStyle(.white).padding())
                         }
-                        Rectangle().fill(MatchStyle.lime.opacity(0.16))
-                            .overlay(Rectangle().stroke(MatchStyle.lime, lineWidth: 2))
+                        Rectangle().fill(MatchColor.lime.opacity(0.16))
+                            .overlay(Rectangle().stroke(MatchColor.lime, lineWidth: 2))
                             .frame(
                                 width: proxy.size.width * region.width,
                                 height: proxy.size.height * region.height
@@ -133,7 +133,7 @@ struct CourtSetupView: View {
                 if !confirmed {
                     Text("You can still continue, but unsupported setups may need more manual corrections.")
                         .typography(.caption)
-                        .foregroundStyle(MatchStyle.muted)
+                        .foregroundStyle(MatchColor.muted)
                 }
                 Button {
                     starting = true
@@ -157,7 +157,7 @@ struct CourtSetupView: View {
                 Text("Your original video will never be changed.")
                     .typography(.caption)
                     .foregroundStyle(
-                        MatchStyle.muted
+                        MatchColor.muted
                     )
                     .frame(maxWidth: .infinity)
             }
