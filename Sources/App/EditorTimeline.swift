@@ -23,11 +23,13 @@ struct EditorTimeline: View {
         VStack(spacing: 8) {
             HStack {
                 Text(timeLabel(position))
-                    .font(.system(.headline, design: .monospaced))
+                    .typography(.body)
+                    .monospacedDigit()
                     .accessibilityIdentifier("editor-playback-time")
                 Spacer()
                 Text(timeLabel(editor.totalDuration))
-                    .font(.caption.monospacedDigit())
+                    .typography(.caption)
+                    .monospacedDigit()
                     .foregroundStyle(
                         .secondary)
             }
@@ -146,7 +148,9 @@ private struct TimelineTile: View {
             }
             if info.tileNumber == 0 && info.width >= 100 {
                 Text(timeLabel(info.clipDuration))
-                    .font(.caption2.monospacedDigit().bold())
+                    .typography(.caption)
+                    .monospacedDigit()
+                    .bold()
                     .lineLimit(1)
                     .fixedSize()
                     .padding(.horizontal, 5)

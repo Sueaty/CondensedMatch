@@ -80,7 +80,7 @@ struct CourtArtwork: View {
 
                     HStack {
                         Text("EVERY RALLY. LESS WAITING.")
-                            .font(.system(size: 8, weight: .medium, design: .monospaced))
+                            .typography(.caption)
                             .tracking(2)
                         Spacer()
                     }

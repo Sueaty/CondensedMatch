@@ -12,7 +12,8 @@ struct PrimaryButton: ButtonStyle {
     var dark = false
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.system(.body, design: .rounded, weight: .semibold))
+            .typography(.body)
+            .bold()
             .frame(maxWidth: .infinity)
             .padding(.vertical, 17)
             .foregroundStyle(dark ? .white : MatchStyle.ink)
@@ -25,7 +26,8 @@ struct Eyebrow: View {
     let title: String
     var body: some View {
         Text(title.uppercased())
-            .font(.system(size: 10, weight: .bold, design: .monospaced))
+            .typography(.caption)
+            .bold()
             .tracking(2)
             .foregroundStyle(MatchStyle.muted)
     }
@@ -35,7 +37,7 @@ struct WarningCard: View {
     let text: String
     var body: some View {
         Label(text, systemImage: "info.circle")
-            .font(.footnote)
+            .typography(.caption)
             .foregroundStyle(MatchStyle.ink)
             .padding(14)
             .frame(maxWidth: .infinity, alignment: .leading)

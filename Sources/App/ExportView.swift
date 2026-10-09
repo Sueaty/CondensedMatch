@@ -20,7 +20,7 @@ struct ExportView: View {
                             result == nil
                                 ? "Keep the match.\nShare the moments." : "Ready for\nanother watch."
                         )
-                        .font(.system(size: 38, design: .serif))
+                        .typography(.brand)
                         .tracking(-1)
                         CourtArtwork()
                             .frame(height: 190)
@@ -33,7 +33,7 @@ struct ExportView: View {
                             Text(
                                 "Video is re-encoded for sharing. Source orientation is preserved; the encoder may adjust dimensions for compatibility. Audio is carried across with each segment."
                             )
-                            .font(.caption)
+                            .typography(.caption)
                             .foregroundStyle(MatchStyle.muted)
                             LabeledContent(
                                 "Space allowance",
@@ -42,7 +42,7 @@ struct ExportView: View {
                             Text(
                                 "A conservative allowance, not a predicted file size. Keep this screen open during export."
                             )
-                            .font(.caption)
+                            .typography(.caption)
                             .foregroundStyle(MatchStyle.muted)
                         }
                         .padding(20)
@@ -53,7 +53,7 @@ struct ExportView: View {
                         if exporter.isRunning {
                             ProgressView(value: exporter.progress) {
                                 Text("Exporting · \(Int(exporter.progress * 100))%")
-                                    .font(.subheadline)
+                                    .typography(.body)
                             }
                             Button("Cancel export") {
                                 exporter.cancel()

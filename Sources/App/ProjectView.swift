@@ -39,12 +39,12 @@ struct CourtSetupView: View {
             VStack(alignment: .leading, spacing: 22) {
                 Eyebrow(title: "01 / Set the scene")
                 Text("This is your court.")
-                    .font(.system(size: 34, design: .serif))
+                    .typography(.brand)
                     .tracking(-0.8)
                 Text(
                     "Frame the entire court to focus detection on your match. Include both baselines and both players."
                 )
-                .font(.subheadline)
+                .typography(.body)
                 .foregroundStyle(MatchStyle.muted)
                 GeometryReader { proxy in
 
@@ -120,7 +120,8 @@ struct CourtSetupView: View {
                             region = NormalizedRect(x: 0, y: 0, width: 1, height: 1)
                         }
                     }
-                    .font(.caption.bold())
+                    .typography(.caption)
+                    .fontWeight(.bold)
                 }
                 .padding(18)
                 .background(.white.opacity(0.75), in: RoundedRectangle(cornerRadius: 18))
@@ -128,11 +129,10 @@ struct CourtSetupView: View {
                     WarningCard(text: $0)
                 }
                 Toggle("The whole court is visible and the camera is fixed.", isOn: $confirmed)
-                    .font(
-                        .subheadline)
+                    .typography(.body)
                 if !confirmed {
                     Text("You can still continue, but unsupported setups may need more manual corrections.")
-                        .font(.caption)
+                        .typography(.caption)
                         .foregroundStyle(MatchStyle.muted)
                 }
                 Button {
@@ -152,10 +152,10 @@ struct CourtSetupView: View {
                 Button("Back to editor") {
                     dismiss()
                 }
-                .font(.subheadline)
+                .typography(.body)
                 .frame(maxWidth: .infinity)
                 Text("Your original video will never be changed.")
-                    .font(.caption)
+                    .typography(.caption)
                     .foregroundStyle(
                         MatchStyle.muted
                     )
@@ -172,12 +172,13 @@ struct CourtSetupView: View {
     {
         HStack {
             Text(title)
-                .font(.caption)
+                .typography(.caption)
                 .frame(width: 45, alignment: .leading)
             Slider(value: value, in: range, step: 0.01)
                 .accessibilityLabel("Court \(title)")
             Text("\(Int(value.wrappedValue * 100))%")
-                .font(.caption.monospacedDigit())
+                .typography(.caption)
+                .monospacedDigit()
                 .frame(
                     width: 38, alignment: .trailing)
         }
@@ -226,7 +227,7 @@ struct VideoEditorView: View {
                             playback.togglePlayback()
                         } label: {
                             Image(systemName: playback.isPlaying ? "pause.fill" : "play.fill")
-                                .font(.title2)
+                                .typography(.brand)
                                 .frame(width: 44, height: 44)
                         }
                         .disabled(!playback.isReady)
@@ -291,10 +292,12 @@ struct VideoEditorView: View {
                             Text(
                                 "Clip \(editor.includedClips.firstIndex(where: { $0.id == selected.id }).map { $0 + 1 } ?? 0)"
                             )
-                            .font(.subheadline.bold())
+                            .typography(.body)
+                            .bold()
                             Spacer(minLength: 8)
                             Text(timeLabel(selected.duration))
-                                .font(.subheadline.monospacedDigit())
+                                .typography(.body)
+                                .monospacedDigit()
                                 .accessibilityIdentifier("editor-selected-clip-duration")
                         }
                     }
@@ -324,7 +327,7 @@ struct VideoEditorView: View {
                         .accessibilityIdentifier("editor-delete")
                     }
                     .buttonStyle(.bordered)
-                    .font(.subheadline)
+                    .typography(.body)
 
                     if editor.clips.contains(where: {
                         !$0.isIncluded
@@ -346,7 +349,7 @@ struct VideoEditorView: View {
                             }
                         } label: {
                             Label("Restore removed clip", systemImage: "arrow.uturn.backward.circle")
-                                .font(.caption)
+                                .typography(.caption)
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
                     }
@@ -434,7 +437,8 @@ struct VideoEditorView: View {
                                     Text(
                                         "\(timeLabel(segment.sourceStart)) – \(timeLabel(segment.sourceEnd))"
                                     )
-                                    .font(.body.monospacedDigit())
+                                    .typography(.body)
+                                    .monospacedDigit()
                                 }
                                 Button("Apply suggestions") {
                                     showApplyConfirmation = true

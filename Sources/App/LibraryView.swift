@@ -15,9 +15,9 @@ struct LibraryView: View {
                     HStack {
                         HStack(spacing: 8) {
                             Image(systemName: "tennisball.fill")
-                                .font(.title2)
+                                .typography(.brand)
                             Text("Rally Cut")
-                                .font(.system(size: 24, weight: .bold, design: .rounded))
+                                .typography(.brand)
                                 .tracking(-1)
                         }
                         Spacer()
@@ -25,7 +25,7 @@ struct LibraryView: View {
                             showPrivacy = true
                         } label: {
                             Image(systemName: "lock.shield")
-                                .font(.title3)
+                                .typography(.brand)
                                 .padding(11)
                                 .background(.white.opacity(0.7), in: Circle())
                         }
@@ -36,13 +36,11 @@ struct LibraryView: View {
                     VStack(alignment: .leading, spacing: 10) {
                         Eyebrow(title: "Your game. Just the good parts.")
                         Text("More tennis.\nLess downtime.")
-                            .font(
-                                .system(size: 44, weight: .regular, design: .serif)
-                            )
+                            .typography(.title)
                             .tracking(-1.7)
                             .fixedSize(horizontal: false, vertical: true)
                         Text("Turn a full match into a match worth rewatching.")
-                            .font(.subheadline)
+                            .typography(.body)
                             .foregroundStyle(MatchStyle.muted)
                     }
                     CourtArtwork()
@@ -57,7 +55,8 @@ struct LibraryView: View {
                         VStack(alignment: .leading, spacing: 10) {
                             HStack {
                                 Text("Bringing your match in…")
-                                    .font(.subheadline.bold())
+                                    .typography(.body)
+                                    .bold()
                                 Spacer()
                                 Button("Cancel") {
                                     store.cancelImport()
@@ -65,7 +64,7 @@ struct LibraryView: View {
                             }
                             ProgressView(value: store.importProgress)
                             Text("A video stored in iCloud may need to download first.")
-                                .font(.caption)
+                                .typography(.caption)
                                 .foregroundStyle(MatchStyle.muted)
                         }
                         .padding()
@@ -77,18 +76,20 @@ struct LibraryView: View {
                     VStack(alignment: .leading, spacing: 16) {
                         HStack {
                             Text("Your matches")
-                                .font(.system(.title2, design: .serif))
+                                .typography(.brand)
                             Spacer()
                             Text(String(format: "%02d", store.projects.count))
-                                .font(.caption.monospaced())
+                                .typography(.caption)
+                                .monospaced()
                                 .foregroundStyle(MatchStyle.muted)
                         }
                         if store.projects.isEmpty {
                             VStack(alignment: .leading, spacing: 12) {
                                 Label("A fresh court.", systemImage: "rectangle.stack")
-                                    .font(.headline)
+                                    .typography(.body)
+                                    .fontWeight(.semibold)
                                 Text("Bring in a match video from Photos. Your original always stays intact.")
-                                    .font(.subheadline)
+                                    .typography(.body)
                                     .foregroundStyle(MatchStyle.muted)
                                     .fixedSize(
                                         horizontal: false, vertical: true)
@@ -96,7 +97,7 @@ struct LibraryView: View {
                                     Label("On-device", systemImage: "iphone")
                                     Label("No account", systemImage: "person.crop.circle.badge.checkmark")
                                 }
-                                .font(.caption)
+                                .typography(.caption)
                                 .foregroundStyle(MatchStyle.muted)
                             }
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -124,7 +125,7 @@ struct LibraryView: View {
                         Image(systemName: "lock.fill")
                         Text("Your footage stays on your iPhone.")
                     }
-                    .font(.caption)
+                    .typography(.caption)
                     .foregroundStyle(MatchStyle.muted)
                     .frame(maxWidth: .infinity)
                     .padding(
@@ -232,26 +233,29 @@ struct ProjectCard: View {
             .clipShape(RoundedRectangle(cornerRadius: 14))
             VStack(alignment: .leading, spacing: 6) {
                 Text(project.title)
-                    .font(.headline)
+                    .typography(.body)
+                    .fontWeight(.semibold)
                     .lineLimit(2)
                 Text(project.createdAt.formatted(date: .abbreviated, time: .omitted))
-                    .font(.caption)
+                    .typography(.caption)
                     .foregroundStyle(MatchStyle.muted)
                 Text(
                     project.status == .ready
                         ? "\(timeLabel(project.source.duration)) → \(timeLabel(project.condensedDuration))"
                         : timeLabel(project.source.duration)
                 )
-                .font(.caption.monospacedDigit())
+                .typography(.caption)
+                .monospacedDigit()
                 Text(project.status.label)
-                    .font(.system(size: 10, weight: .semibold))
+                    .typography(.caption)
+                    .bold()
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)
                     .background(MatchStyle.lime.opacity(0.35), in: Capsule())
             }
             Spacer(minLength: 0)
             Image(systemName: "chevron.right")
-                .font(.caption)
+                .typography(.caption)
                 .foregroundStyle(MatchStyle.muted)
         }
         .padding(12)
@@ -266,15 +270,16 @@ struct PrivacyView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
                     Image(systemName: "lock.shield")
-                        .font(.largeTitle)
+                        .typography(.brand)
                     Text("Your court.\nYour footage.")
-                        .font(.system(size: 36, design: .serif))
+                        .typography(.brand)
                     Text(
                         "Analysis and editing happen on your iPhone. No account, uploads, analytics, or cloud processing. Photos may download a video from iCloud when you choose to import it."
                     )
                     Divider()
                     Label("Set up for a better result", systemImage: "video")
-                        .font(.headline)
+                        .typography(.body)
+                        .fontWeight(.semibold)
                     Text(
                         "Import footage recorded with a fixed, landscape camera behind the baseline. Keep one entire singles court in view and include audio. Handheld, doubles, broadcast, and multi-court videos are not validated."
                     )
@@ -284,7 +289,7 @@ struct PrivacyView: View {
                     Text(
                         "Current input limit: 1 second–4 hours. Use H.264 or HEVC video up to 4K where possible. Device performance and detection accuracy have not been benchmarked."
                     )
-                    .font(.footnote)
+                    .typography(.caption)
                     .foregroundStyle(MatchStyle.muted)
                 }
                 .padding(28)
