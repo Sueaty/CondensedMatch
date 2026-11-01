@@ -2,9 +2,9 @@ import SwiftUI
 
 struct ExportView: View {
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.dismiss) private var dismiss
     @Bindable var store: AppStore
     let projectID: UUID
-    let onDone: () -> Void
     @State private var exporter = ExportService()
     @State private var result: URL?
     @State private var message: String?
@@ -15,35 +15,34 @@ struct ExportView: View {
             if let project = store.project(projectID) {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 26) {
-                        Eyebrow(title: "03 / Worth watching again")
+                        Eyebrow(title: "Worth watching again")
+
                         Text(
                             result == nil
                                 ? "Keep the match.\nShare the moments." : "Ready for\nanother watch."
                         )
-                        .typography(.brand)
+                        .typography(.title2)
                         .tracking(-1)
-                        CourtArtwork()
-                            .frame(height: 190)
+
+                        ExportResultSummary(
+                            condensedDuration: project.condensedDuration,
+                            sourceDuration: project.source.duration
+                        )
+
                         VStack(alignment: .leading, spacing: 14) {
-                            LabeledContent("Condensed length", value: timeLabel(project.condensedDuration))
-                            LabeledContent(
-                                "Source resolution",
-                                value: "\(project.source.width) × \(project.source.height)")
-                            LabeledContent("Format", value: "MP4 · highest quality")
-                            Text(
-                                "Video is re-encoded for sharing. Source orientation is preserved; the encoder may adjust dimensions for compatibility. Audio is carried across with each segment."
-                            )
-                            .typography(.caption)
-                            .foregroundStyle(MatchColor.muted)
-                            LabeledContent(
-                                "Space allowance",
-                                value: ByteCountFormatter.string(
-                                    fromByteCount: ExportService.requiredSpace(project), countStyle: .file))
-                            Text(
-                                "A conservative allowance, not a predicted file size. Keep this screen open during export."
-                            )
-                            .typography(.caption)
-                            .foregroundStyle(MatchColor.muted)
+                            LabeledContent("Source resolution") {
+                                Text("\(project.source.width) × \(project.source.height)")
+                                    .foregroundStyle(MatchColor.muted)
+                            }
+
+                            LabeledContent("Format") {
+                                Text("MP4 · highest quality")
+                                    .foregroundStyle(MatchColor.muted)
+                            }
+
+                            Text("Keep this screen open while exporting.")
+                                .typography(.caption)
+                                .foregroundStyle(MatchColor.muted)
                         }
                         .padding(20)
                         .background(.white.opacity(0.75), in: RoundedRectangle(cornerRadius: 18))
@@ -103,10 +102,17 @@ struct ExportView: View {
                 .navigationTitle("Export match")
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
-                    ToolbarItem(placement: .confirmationAction) {
-                        Button("Done") {
-                            onDone()
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button {
+                            dismiss()
+                        } label: {
+                            HStack(spacing: 4) {
+                                Image(systemName: "chevron.left")
+                                Text("Editing")
+                            }
                         }
+                        .accessibilityLabel("Back to editing")
+                        .accessibilityIdentifier("export-back-to-editing")
                         .disabled(exporter.isRunning || saving)
                     }
                 }
@@ -153,6 +159,56 @@ struct ExportView: View {
                     "Export did not complete. \(error.localizedDescription) Your original and edits are safe; you can retry."
             }
         }
+    }
+}
+
+private struct ExportResultSummary: View {
+    let condensedDuration: Double
+    let sourceDuration: Double
+
+    private var keptFraction: Double {
+        guard sourceDuration > 0 else {
+            return 1
+        }
+        return min(1, max(0, condensedDuration / sourceDuration))
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(alignment: .lastTextBaseline, spacing: 10) {
+                Text(timeLabel(condensedDuration))
+                    .font(.system(size: 48, weight: .regular, design: .serif))
+                    .tracking(-1.5)
+                    .monospacedDigit()
+                    .foregroundStyle(.white)
+
+                Text("from \(timeLabel(sourceDuration)) of footage")
+                    .typography(.caption)
+                    .foregroundStyle(.white.opacity(0.65))
+            }
+
+            Capsule()
+                .fill(.white.opacity(0.15))
+                .frame(height: 8)
+                .overlay(alignment: .leading) {
+                    GeometryReader { proxy in
+                        Capsule()
+                            .fill(MatchColor.lime)
+                            .frame(width: proxy.size.width * keptFraction)
+                    }
+                }
+
+            Text(
+                "\(Int((keptFraction * 100).rounded()))% kept · \(timeLabel(max(0, sourceDuration - condensedDuration))) of downtime cut"
+            )
+            .typography(.caption)
+            .tracking(0.5)
+            .foregroundStyle(.white.opacity(0.65))
+        }
+        .padding(22)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(MatchColor.ink, in: RoundedRectangle(cornerRadius: 24))
+        .accessibilityElement(children: .combine)
     }
 }
 

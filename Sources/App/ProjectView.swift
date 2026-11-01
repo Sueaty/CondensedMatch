@@ -34,7 +34,7 @@ struct VideoEditorView: View {
     let id: UUID
     @State private var playback = EditorPlayback()
     @State private var showExport = false
-    @State private var closeEditorAfterExport = false
+    @State private var showDiscardConfirmation = false
     @State private var isOperating = false
     @State private var isUserScrolling = false
     @State private var splitLookup = EditorSplitLookup()
@@ -266,18 +266,41 @@ struct VideoEditorView: View {
                     playback.pause()
                 }
             }
-            .sheet(isPresented: $showExport, onDismiss: {
-                if closeEditorAfterExport {
-                    closeEditorAfterExport = false
-                    dismiss()
-                }
-            }) {
-                ExportView(store: store, projectID: id) {
-                    closeEditorAfterExport = true
-                    showExport = false
+            .sheet(isPresented: $showExport) {
+                ExportView(store: store, projectID: id)
+            }
+            .navigationBarBackButtonHidden(true)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button {
+                        if hasEdits(editor) {
+                            playback.pause()
+                            showDiscardConfirmation = true
+                        } else {
+                            dismiss()
+                        }
+                    } label: {
+                        Image(systemName: "chevron.left")
+                    }
+                    .accessibilityLabel("Back")
+                    .accessibilityIdentifier("editor-back")
                 }
             }
+            .alert("Discard this edit?", isPresented: $showDiscardConfirmation) {
+                Button("Discard Edit", role: .destructive) {
+                    dismiss()
+                }
+
+                Button("Keep Editing", role: .cancel) {
+                }
+            } message: {
+                Text("Your splits and deletions will be lost. Videos already saved to Photos stay there.")
+            }
         }
+    }
+
+    private func hasEdits(_ editor: EditorState) -> Bool {
+        editor.canUndo || editor.clips.count > 1
     }
 
     private var canEdit: Bool {

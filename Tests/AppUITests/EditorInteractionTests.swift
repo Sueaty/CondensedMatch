@@ -3,7 +3,7 @@ import UIKit
 
 @MainActor
 final class EditorInteractionTests: XCTestCase {
-    func testExportActionsUseSevenToThreeWidthsAndDoneReturnsHome() throws {
+    func testExportActionsUseSevenToThreeWidthsAndBackReturnsToEditor() throws {
         let app = openEditor()
         app.buttons["Export"].tap()
         let create = app.buttons["Create condensed video"]
@@ -22,16 +22,37 @@ final class EditorInteractionTests: XCTestCase {
         XCTAssertEqual(save.frame.height, share.frame.height, accuracy: 1)
         XCTAssertEqual(save.frame.width / share.frame.width, 7.0 / 3.0, accuracy: 0.03)
 
-        app.buttons["Done"].tap()
-        XCTAssertTrue(app.buttons["Import match video"].waitForExistence(timeout: 5))
-        XCTAssertFalse(app.scrollViews["editor-timeline-scroll"].exists)
+        app.buttons["export-back-to-editing"].tap()
+        XCTAssertTrue(app.scrollViews["editor-timeline-scroll"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["Import match video"].exists)
     }
 
-    func testExportDoneBeforeCreatingVideoReturnsHome() throws {
-        let app = openEditor()
+    func testExportBackBeforeCreatingVideoKeepsEditingSession() throws {
+        let app = openEditor(environment: ["RALLYCUT_EDITOR_TEST_NEARBY_SPLIT": "1"])
+        let before = total(app)
         app.buttons["Export"].tap()
-        XCTAssertTrue(app.buttons["Done"].waitForExistence(timeout: 5))
-        app.buttons["Done"].tap()
+        let back = app.buttons["export-back-to-editing"]
+        XCTAssertTrue(back.waitForExistence(timeout: 5))
+        back.tap()
+        XCTAssertTrue(app.scrollViews["editor-timeline-scroll"].waitForExistence(timeout: 5))
+        waitUntilReady(app)
+        XCTAssertEqual(total(app), before, accuracy: 0.001)
+        XCTAssertTrue(app.buttons["Undo"].isEnabled)
+    }
+
+    func testBackWithEditsAsksBeforeDiscarding() throws {
+        let app = openEditor(environment: ["RALLYCUT_EDITOR_TEST_NEARBY_SPLIT": "1"])
+        let before = total(app)
+        app.buttons["editor-back"].tap()
+        let alert = app.alerts["Discard this edit?"]
+        XCTAssertTrue(alert.waitForExistence(timeout: 3))
+        alert.buttons["Keep Editing"].tap()
+        XCTAssertTrue(app.scrollViews["editor-timeline-scroll"].exists)
+        XCTAssertEqual(total(app), before, accuracy: 0.001)
+
+        app.buttons["editor-back"].tap()
+        XCTAssertTrue(alert.waitForExistence(timeout: 3))
+        alert.buttons["Discard Edit"].tap()
         XCTAssertTrue(app.buttons["Import match video"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.scrollViews["editor-timeline-scroll"].exists)
     }
