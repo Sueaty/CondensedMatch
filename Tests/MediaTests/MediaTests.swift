@@ -1,8 +1,206 @@
 import XCTest
 import AVFoundation
+import UIKit
 @testable import RallyCut
 
 final class MediaTests: XCTestCase {
+    @MainActor
+    func testDenseFilmstripFinishesVisibleDemandAndRetainsImagesAfterCacheEviction() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(at: directory)
+        }
+        let source = try await makeVideo(
+            in: directory,
+            presentationTimes: (0...150).map {
+                CMTime(value: Int64($0), timescale: 5)
+            })
+        let clips = (0..<150).map {
+            EditorClip(sourceStart: Double($0) / 5, sourceEnd: Double($0 + 1) / 5)
+        }
+        let editor = try EditorState(sourceDuration: 30, clips: clips)
+        let tiles = EditorTimelineLayout.tiles(
+            for: editor, pointsPerSecond: 3, tileDuration: 32, visibleRange: 0...30)
+        let strip = TimelineFilmstripView(frame: CGRect(x: 0, y: 0, width: 393, height: 76))
+        let provider = TimelineThumbnailProvider(source: source)
+        defer {
+            provider.stop()
+            strip.reset()
+        }
+        provider.onChange = {
+            strip.update(tiles: tiles, clips: clips, provider: provider, inset: 0, scale: 3)
+            provider.request(tiles.map(\.sourceTime))
+        }
+        provider.request(tiles.map(\.sourceTime))
+        let deadline = Date().addingTimeInterval(15)
+        while provider.cachedImage(at: 29.8) == nil && Date() < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertNotNil(provider.cachedImage(at: 29.8))
+        XCTAssertNil(provider.cachedImage(at: 0), "The decoded cache must remain bounded")
+        let images = strip.subviews.compactMap { $0 as? UIImageView }
+        XCTAssertEqual(images.count, 150)
+        XCTAssertTrue(images.allSatisfy { $0.image != nil })
+        let requests = provider.generationCount
+        try await Task.sleep(for: .milliseconds(150))
+        XCTAssertEqual(
+            provider.generationCount, requests, "Eviction must not restart completed visible demand")
+    }
+
+    func testSplitResolverAndCommitShareActualFrameMinimumDespiteNominalRateMismatch() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(at: directory)
+        }
+        let source = try await makeVideo(in: directory)
+        let resolver = VideoFrameBoundaryResolver()
+        let short = try EditorState(sourceDuration: 1.0 / 30)
+        do {
+            _ = try await resolver.splitBoundary(
+                in: source, editor: short, at: 1.0 / 60, fallbackFrameRate: 120)
+            XCTFail("A one-frame clip cannot be split using a shorter nominal frame duration")
+        } catch {
+            XCTAssertEqual(error as? EditorCoreError, .clipTooShort)
+        }
+        var twoFrames = try EditorState(sourceDuration: 10.0 / 30)
+        let boundary = try await resolver.splitBoundary(
+            in: source, editor: twoFrames, at: 5.0 / 30, fallbackFrameRate: 1)
+        XCTAssertEqual(boundary.minimumClipDuration, 0.15, accuracy: 0.000_001)
+        XCTAssertTrue(
+            twoFrames.canSplit(
+                atEditTime: boundary.sourceTime, minimumClipDuration: boundary.minimumClipDuration))
+        try twoFrames.split(
+            atEditTime: boundary.sourceTime, minimumClipDuration: boundary.minimumClipDuration)
+        XCTAssertEqual(twoFrames.includedClips.count, 2)
+    }
+
+    func testCompressedReaderMarkersCannotBecomeInventedSplitBoundaries() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(at: directory)
+        }
+        let source = try await makeVideo(
+            in: directory,
+            presentationTimes: [0, 1, 300, 600].map {
+                CMTime(value: Int64($0), timescale: 30)
+            })
+        let resolver = VideoFrameBoundaryResolver()
+        do {
+            _ = try await resolver.nearestBoundary(
+                in: source, to: 5, clipStart: 2, clipEnd: 9, fallbackFrameRate: 30)
+            XCTFail("Reader range markers are not source video frames")
+        } catch {
+            guard case FrameBoundaryError.noInteriorFrame = error else {
+                return XCTFail("Unexpected error: \(error)")
+            }
+        }
+    }
+
+    @MainActor
+    func testThumbnailDemandCoalescesAndPinchReusesFramesWithoutDecoding() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(at: directory)
+        }
+        let source = try await makeVideo(in: directory)
+        let provider = TimelineThumbnailProvider(source: source)
+        defer {
+            provider.stop()
+        }
+        // Hundreds of obsolete visible lists must collapse into the last demand before decoding.
+        for step in 0..<500 {
+            provider.request([Double(step % 30) / 10])
+        }
+        provider.request([0])
+        let initialDeadline = Date().addingTimeInterval(5)
+        while provider.cachedImage(at: 0) == nil && Date() < initialDeadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertNotNil(provider.cachedImage(at: 0))
+        XCTAssertEqual(provider.generationCount, 1)
+
+        let strip = TimelineFilmstripView(frame: CGRect(x: 0, y: 0, width: 393, height: 76))
+        let editor = try EditorState(sourceDuration: 14_400)
+        for step in 0..<1000 {
+            let scale = EditorTimelineZoom.scale(
+                startingAt: 3, magnification: pow(160, Double(step % 100) / 99))
+            let tiles = EditorTimelineLayout.tiles(
+                for: editor, pointsPerSecond: scale,
+                tileDuration: EditorTimelineZoom.thumbnailDuration(scale: scale),
+                visibleRange: (7200 - 196.5 / scale)...(7200 + 196.5 / scale))
+            provider.request(tiles.map(\.sourceTime), suspended: true)
+            strip.update(
+                tiles: tiles, clips: editor.includedClips, provider: provider,
+                inset: 196.5 - 7200 * scale, scale: scale)
+            XCTAssertLessThanOrEqual(strip.subviews.count, 8)
+            XCTAssertTrue(
+                strip.subviews.compactMap { $0 as? UIImageView }.allSatisfy {
+                    $0.image != nil && $0.bounds.width <= 121
+                })
+            if step.isMultiple(of: 100) {
+                await Task.yield()
+            }
+        }
+        XCTAssertEqual(provider.generationCount, 1, "Pinch changes must reuse decoded frames")
+        provider.request([1, 1, 2, 2])
+        let deadline = Date().addingTimeInterval(5)
+        while provider.cachedImage(at: 2) == nil && Date() < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertNotNil(provider.cachedImage(at: 1))
+        XCTAssertNotNil(provider.cachedImage(at: 2))
+        XCTAssertEqual(provider.generationCount, 3)
+        provider.stop()
+        provider.request([3])
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(provider.generationCount, 3)
+    }
+
+    @MainActor
+    func testFilmstripKeepsBothCutsVisibleAroundSubsecondClipAfterSplitAndUndoRedo() throws {
+        var editor = try EditorState(sourceDuration: 60)
+        try editor.split(atEditTime: 10, minimumClipDuration: 1.0 / 30)
+        let firstCutID = try XCTUnwrap(editor.includedClips.last?.id)
+        try editor.split(atEditTime: 10.9, minimumClipDuration: 1.0 / 30)
+        let secondCutID = try XCTUnwrap(editor.includedClips.last?.id)
+        let strip = TimelineFilmstripView(frame: CGRect(x: 0, y: 0, width: 393, height: 76))
+        func render() {
+            let tiles = EditorTimelineLayout.tiles(
+                for: editor, pointsPerSecond: 90, tileDuration: 1, visibleRange: 8...13)
+            strip.update(
+                tiles: tiles, clips: editor.includedClips, provider: nil,
+                inset: 196.5 - 10.9 * 90, scale: 90)
+        }
+        func boundary(_ id: UUID) -> UIView? {
+            strip.subviews.first {
+                $0.accessibilityIdentifier == "editor-clip-boundary-\(id)"
+            }
+        }
+        render()
+        XCTAssertEqual(editor.includedClips.count, 3)
+        XCTAssertEqual(editor.includedClips[1].duration, 0.9, accuracy: 0.000_001)
+        XCTAssertEqual(try XCTUnwrap(boundary(firstCutID)).frame.minX, 115.5, accuracy: 0.5)
+        XCTAssertEqual(try XCTUnwrap(boundary(secondCutID)).frame.minX, 196.5, accuracy: 0.5)
+        XCTAssertEqual(strip.subviews.last, boundary(secondCutID))
+
+        try editor.select(editor.includedClips[0].id)
+        render()
+        XCTAssertNotNil(boundary(firstCutID))
+        XCTAssertNotNil(boundary(secondCutID))
+        editor.undo()
+        render()
+        XCTAssertNotNil(boundary(firstCutID))
+        XCTAssertNil(boundary(secondCutID))
+        editor.redo()
+        render()
+        XCTAssertNotNil(boundary(firstCutID))
+        XCTAssertNotNil(boundary(secondCutID))
+    }
+
     func testSplitUsesVFRPresentationTimesInsteadOfNominalFPSGrid() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -98,21 +296,18 @@ final class MediaTests: XCTestCase {
         }
         let source = try await makeVideo(in: directory)
         let original = try Data(contentsOf: source)
-        let repository = try ProjectRepository(root: directory.appendingPathComponent("projects"))
-        var project = try await SourceAssetStore().importVideo(at: source, repository: repository)
+        let repository = directory.appendingPathComponent("projects")
+        var project = try await SourceAssetStore().importVideo(at: source, root: repository)
         XCTAssertGreaterThan(project.source.duration, 3)
         XCTAssertFalse(project.source.hasAudio)
-        XCTAssertEqual(project.status, .setup)
         XCTAssertEqual(project.segments.count, 1)
         XCTAssertEqual(project.segments.first?.sourceStart, 0)
         XCTAssertEqual(project.segments.first?.sourceEnd, project.source.duration)
         XCTAssertEqual(project.condensedDuration, project.source.duration)
-        XCTAssertNil(project.analysis)
-        XCTAssertNil(project.pendingAnalysisSegments)
         project.segments = [.init(start: 2, end: 3), .init(start: 0, end: 1), .init(start: 0.5, end: 1.5)]
         project.editorState = try EditorState.fromSegments(
             project.segments, sourceDuration: project.source.duration)
-        let folder = try await repository.directory(for: project.id)
+        let folder = repository.appendingPathComponent(project.id.uuidString)
         let owned = folder.appendingPathComponent(project.source.filename)
         let composition = try await CompositionBuilder.build(source: owned, project: project)
         let duration = try await composition.load(.duration)
@@ -137,7 +332,7 @@ final class MediaTests: XCTestCase {
     }
 
     @MainActor
-    func testImportThroughStoreIsImmediatelyPlayableWithoutAnalysis() async throws {
+    func testImportThroughStoreIsImmediatelyPlayable() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer {
@@ -152,91 +347,44 @@ final class MediaTests: XCTestCase {
         let playable = try await item.asset.load(.isPlayable)
         XCTAssertTrue(playable)
         XCTAssertEqual(project.segments.count, 1)
-        XCTAssertNil(store.activeAnalysisID)
-        XCTAssertNil(project.analysis)
         let composition = try await CompositionBuilder.build(
             source: store.sourceURL(project), project: project)
         let duration = try await composition.load(.duration)
         XCTAssertEqual(duration.seconds, project.source.duration, accuracy: 0.001)
 
-        // A subsequent edit must survive relaunch even when setup/analysis is skipped.
         await store.edit(id, segments: [.init(start: 1, end: 2)])
+        let edited = try XCTUnwrap(store.project(id))
+        XCTAssertEqual(edited.editorState?.includedClips.map(\.sourceStart), [1])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: store.folder(id).appendingPathComponent("project.json").path))
+        store.endSession()
+        XCTAssertNil(store.project(id))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: store.root.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: source.path))
         let reloaded = AppStore(root: store.root)
-        await reloaded.load()
-        let saved = try XCTUnwrap(reloaded.project(id))
-        XCTAssertEqual(saved.segments.map(\.sourceStart), [1])
-        XCTAssertEqual(saved.segments.map(\.sourceEnd), [2])
+        XCTAssertNil(reloaded.activeProject)
     }
 
     @MainActor
-    func testManualEditSurvivesAnalysisTaskAndCheckpoints() async throws {
+    func testNewProcessRemovesLeftoverWorkingFilesAndRejectsEndedSessionUpdates() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer {
             try? FileManager.default.removeItem(at: directory)
         }
-        let source = try await makeVideo(in: directory)
-        let store = AppStore(root: directory.appendingPathComponent("projects"))
-        let importedID = await store.importURL(source)
-        let id = try XCTUnwrap(importedID)
-        let manual = [PointSegment(start: 1, end: 2)]
-
-        store.analyze(id)
-        await store.edit(id, segments: manual)
-        let deadline = Date().addingTimeInterval(30)
-        while store.activeAnalysisID != nil && Date() < deadline {
-            try await Task.sleep(for: .milliseconds(20))
-        }
-        XCTAssertNil(store.activeAnalysisID, "Analysis did not finish in time")
-        let project = try XCTUnwrap(store.project(id))
-        XCTAssertEqual(project.segments, manual)
-        XCTAssertEqual(project.status, .ready)
-        XCTAssertNotNil(project.pendingAnalysisSegments)
-
-        let reloaded = AppStore(root: store.root)
-        await reloaded.load()
-        XCTAssertEqual(reloaded.project(id)?.segments, manual)
-        XCTAssertEqual(reloaded.project(id)?.pendingAnalysisSegments, project.pendingAnalysisSegments)
-    }
-
-    func testSilentAnalysisCheckpointResumeAndCancellation() async throws {
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        defer {
-            try? FileManager.default.removeItem(at: directory)
-        }
-        let source = try await makeVideo(in: directory)
-        let repository = try ProjectRepository(root: directory.appendingPathComponent("projects"))
-        var project = try await SourceAssetStore().importVideo(at: source, repository: repository)
-        let engine = AnalysisCoordinator()
-        let full = try await engine.analyze(project: project, source: source) { _ in
-        }
-        XCTAssertEqual(full.0.stage, .complete)
-        XCTAssertFalse(full.0.visual.isEmpty)
-        var record = full.0
-        record.stage = .video
-        record.completedAt = nil
-        record.visual = Array(record.visual.prefix(2))
-        record.warnings = []
-        project.analysis = record
-        let resumed = try await engine.analyze(project: project, source: source) { _ in
-        }
-        XCTAssertEqual(resumed.0.visual, full.0.visual)
-        let cancelledProject = project
-        let task = Task {
-            try await engine.analyze(project: cancelledProject, source: source) { _ in
-                try Task.checkCancellation()
-            }
-        }
-        task.cancel()
-        do {
-            _ = try await task.value
-            XCTFail("Expected cancellation")
-        } catch is CancellationError {
-        } catch {
-            XCTFail("Unexpected error: \(error)")
-        }
-        XCTAssertTrue(FileManager.default.fileExists(atPath: source.path))
+        let store = AppStore(root: directory)
+        let source = SourceAssetReference(
+            filename: "source.mov", duration: 10, width: 640, height: 360,
+            frameRate: 30, hasAudio: false, byteCount: 3)
+        let project = MatchProject(title: "Ended edit", source: source)
+        let stale = store.folder(project.id)
+        try FileManager.default.createDirectory(at: stale, withIntermediateDirectories: true)
+        try Data([1, 2, 3]).write(to: stale.appendingPathComponent(source.filename))
+        let fresh = AppStore(root: directory)
+        XCTAssertNil(fresh.activeProject)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: stale.path))
+        fresh.endSession()
+        let accepted = await fresh.updateProject(project)
+        XCTAssertFalse(accepted)
+        XCTAssertNil(fresh.activeProject)
     }
 
     func testMissingSourceAndZeroResultAreRecoverable() async throws {
@@ -261,7 +409,7 @@ final class MediaTests: XCTestCase {
         }
     }
 
-    func testAudioAlignmentRotatedVideoAndEnergyAnalysis() async throws {
+    func testAudioAlignmentAndRotatedVideo() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer {
@@ -303,18 +451,11 @@ final class MediaTests: XCTestCase {
             AVAssetExportSession(asset: composition, presetName: AVAssetExportPresetPassthrough))
         let muxURL = directory.appendingPathComponent("rotated.mov")
         try await mux.export(to: muxURL, as: .mov)
-        let repository = try ProjectRepository(root: directory.appendingPathComponent("projects"))
-        var project = try await SourceAssetStore().importVideo(at: muxURL, repository: repository)
+        let repository = directory.appendingPathComponent("projects")
+        var project = try await SourceAssetStore().importVideo(at: muxURL, root: repository)
         XCTAssertTrue(project.source.hasAudio)
         XCTAssertEqual(project.source.width, 180)
         XCTAssertEqual(project.source.height, 320)
-        let analysis = try await AnalysisCoordinator().analyze(project: project, source: muxURL) { _ in
-        }
-        XCTAssertFalse(analysis.0.audio.isEmpty)
-        XCTAssertTrue(
-            analysis.0.audio.allSatisfy {
-                $0.value.isFinite && (0...1).contains($0.value)
-            })
         project.segments = [.init(start: 0.5, end: 1.5), .init(start: 2, end: 3)]
         project.editorState = try EditorState.fromSegments(
             project.segments, sourceDuration: project.source.duration)
@@ -327,7 +468,7 @@ final class MediaTests: XCTestCase {
         XCTAssertEqual(vt.start.seconds, at.start.seconds, accuracy: 0.001)
         let rotation = try await previewVideo.load(.preferredTransform)
         XCTAssertEqual(rotation, v.preferredTransform)
-        let folder = try await repository.directory(for: project.id)
+        let folder = repository.appendingPathComponent(project.id.uuidString)
         let exporter = await ExportService()
         let exported = try await exporter.export(project: project, source: muxURL, folder: folder)
         let output = AVURLAsset(url: exported)
@@ -348,8 +489,8 @@ final class MediaTests: XCTestCase {
             try? FileManager.default.removeItem(at: directory)
         }
         let source = try await makeVideo(in: directory)
-        let repo = try ProjectRepository(root: directory.appendingPathComponent("projects"))
-        var project = try await SourceAssetStore().importVideo(at: source, repository: repo)
+        let repo = directory.appendingPathComponent("projects")
+        var project = try await SourceAssetStore().importVideo(at: source, root: repo)
         project.segments = [.init(start: 0, end: 2)]
         project.editorState = try EditorState.fromSegments(
             project.segments, sourceDuration: project.source.duration)
@@ -370,6 +511,148 @@ final class MediaTests: XCTestCase {
         XCTAssertFalse(exporter.isRunning)
         let retry = try await exporter.export(project: project, source: source, folder: directory)
         XCTAssertTrue(FileManager.default.fileExists(atPath: retry.path))
+    }
+
+    @MainActor
+    func testSeekStormStopAndReprepareKeepLatestPosition() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(at: directory)
+        }
+        let source = try await makeVideo(in: directory)
+        let store = AppStore(root: directory.appendingPathComponent("projects"))
+        let imported = await store.importURL(source)
+        let project = try XCTUnwrap(
+            imported.flatMap {
+                store.project($0)
+            })
+        let playback = EditorPlayback()
+        playback.start()
+        try await playback.prepare(project: project, source: store.sourceURL(project))
+        playback.beginScrubbing()
+        for step in 0..<200 {
+            playback.scrub(to: Double(step % 37) / 10)
+        }
+        playback.endScrubbing(at: 2.7)
+        try await waitForPlayback(playback, at: 2.7)
+        try await Task.sleep(for: .milliseconds(150))
+        XCTAssertEqual(playback.position, 2.7, accuracy: 0.000_001)
+
+        playback.scrub(to: 3.5)
+        playback.stop()
+        playback.start()
+        try await playback.prepare(project: project, source: store.sourceURL(project))
+        playback.scrub(to: 1.2)
+        try await waitForPlayback(playback, at: 1.2)
+        XCTAssertTrue(playback.isReady)
+        XCTAssertEqual(playback.position, 1.2, accuracy: 0.000_001)
+        playback.stop()
+    }
+
+    @MainActor
+    func testVFRTrimCompositionExportAndRestorationUseSameSourceRanges() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(at: directory)
+        }
+        let source = try await makeVideo(
+            in: directory,
+            presentationTimes: [0, 12, 31, 58, 92, 140, 190].map {
+                CMTime(value: Int64($0), timescale: 100)
+            })
+        let store = AppStore(root: directory.appendingPathComponent("projects"))
+        let imported = await store.importURL(source)
+        let id = try XCTUnwrap(imported)
+        var project = try XCTUnwrap(store.project(id))
+        let originalDuration = project.condensedDuration
+        let clip = try XCTUnwrap(project.editorState?.includedClips.first)
+        let resolver = VideoFrameBoundaryResolver()
+        let start = try await resolver.trimBoundary(
+            in: source, to: 0.78, clip: clip, edge: .start, fallbackFrameRate: 30)
+        XCTAssertEqual(start.sourceTime, 0.92, accuracy: 0.001)
+        let trimmed = await store.updateEditor(id) {
+            try $0.trim(
+                clip.id, edge: .start, toSourceTime: start.sourceTime,
+                minimumClipDuration: start.minimumClipDuration)
+        }
+        XCTAssertTrue(trimmed)
+        project = try XCTUnwrap(store.project(id))
+        let composition = try await CompositionBuilder.build(
+            source: store.sourceURL(project), project: project)
+        let track = try await firstTrack(composition, .video)
+        let segments = try await track.load(.segments)
+        XCTAssertEqual(try XCTUnwrap(segments.first).timeMapping.source.start.seconds, 0.92, accuracy: 0.001)
+        XCTAssertEqual(project.condensedDuration, originalDuration - 0.92, accuracy: 0.001)
+        let output = try await ExportService().export(
+            project: project, source: store.sourceURL(project), folder: directory)
+        let exportedDuration = try await AVURLAsset(url: output).load(.duration).seconds
+        XCTAssertEqual(exportedDuration, project.condensedDuration, accuracy: 0.05)
+        let restored = await store.updateEditor(id) {
+            $0.undo()
+        }
+        XCTAssertTrue(restored)
+        XCTAssertEqual(try XCTUnwrap(store.project(id)).condensedDuration, originalDuration, accuracy: 0.001)
+    }
+
+    func testFrameResolverRoundsMinimumDurationToActualSourceFrames() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(at: directory)
+        }
+        let source = try await makeVideo(in: directory)
+        let resolver = VideoFrameBoundaryResolver()
+        for candidate in [5.0 / 30, 6.0 / 30] {
+            let boundary = try await resolver.nearestBoundary(
+                in: source, to: candidate, clipStart: 0, clipEnd: 11.0 / 30, fallbackFrameRate: 30)
+            XCTAssertEqual(boundary.sourceTime, candidate, accuracy: 0.000_001)
+            XCTAssertGreaterThanOrEqual(boundary.sourceTime, 0.15)
+            XCTAssertGreaterThanOrEqual(11.0 / 30 - boundary.sourceTime, 0.15)
+        }
+        do {
+            _ = try await resolver.nearestBoundary(
+                in: source, to: 0.15, clipStart: 0, clipEnd: 0.3, fallbackFrameRate: 30)
+            XCTFail("Nine source frames at 30fps cannot form two clips of at least 0.15 seconds")
+        } catch {
+            guard case FrameBoundaryError.noInteriorFrame = error else {
+                return XCTFail("Unexpected error: \(error)")
+            }
+        }
+    }
+
+    func testExactlyPointFifteenSecondsIsAllowedAtSixtyFPS() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(at: directory)
+        }
+        let source = try await makeVideo(
+            in: directory,
+            presentationTimes: (0..<120).map {
+                CMTime(value: Int64($0), timescale: 60)
+            })
+        var editor = try EditorState(sourceDuration: 0.3)
+        let resolver = VideoFrameBoundaryResolver()
+        let boundary = try await resolver.splitBoundary(
+            in: source, editor: editor, at: 0.15, fallbackFrameRate: 60)
+        try editor.split(atEditTime: boundary.sourceTime, minimumClipDuration: boundary.minimumClipDuration)
+        XCTAssertEqual(editor.includedClips.count, 2)
+        XCTAssertEqual(editor.includedClips[0].duration, 0.15, accuracy: 0.000_001)
+        XCTAssertEqual(editor.includedClips[1].duration, 0.15, accuracy: 0.000_001)
+    }
+
+    @MainActor
+    private func waitForPlayback(_ playback: EditorPlayback, at time: Double) async throws {
+        let deadline = Date().addingTimeInterval(5)
+        while (!playback.isReady || abs(playback.player.currentTime().seconds - time) > 0.034)
+            && Date() < deadline
+        {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertTrue(playback.isReady)
+        XCTAssertEqual(playback.player.currentTime().seconds, time, accuracy: 0.034)
     }
 
     private func firstTrack(_ asset: AVAsset, _ type: AVMediaType) async throws -> AVAssetTrack {

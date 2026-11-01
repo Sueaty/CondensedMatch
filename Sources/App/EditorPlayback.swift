@@ -1,7 +1,7 @@
 import SwiftUI
 import AVFoundation
 
-/// Owns the composition player; scrubbing coalesces seeks to the latest time.
+/// Serializes seeks and ignores callbacks belonging to a replaced player item.
 @MainActor
 @Observable
 final class EditorPlayback {
@@ -10,112 +10,175 @@ final class EditorPlayback {
     private(set) var isPlaying = false
     private(set) var isPreparing = false
     private(set) var isReady = false
+    private(set) var interactionRevision: UInt64 = 0
     private var timeObserver: Any?
-    private var generation = 0
+    private var endObserver: NSObjectProtocol?
+    private var generation: UInt64 = 0
     private var pendingSeek: Double?
     private var seekInFlight = false
+    private var isBuilding = false
+    private var isScrubbing = false
     private var duration = 0.0
+    private var observing = false
 
     func start() {
-        guard timeObserver == nil else {
+        observing = true
+        installObservers()
+    }
+
+    private func installObservers() {
+        removeObservers()
+        guard observing else {
             return
         }
+        let request = generation
         timeObserver = player.addPeriodicTimeObserver(
             forInterval: CMTime(seconds: 1.0 / 30.0, preferredTimescale: 600), queue: .main
-        ) {
-            [weak self] time in
-
-            Task {
-                @MainActor [weak self] in
-
-                guard let self, self.timeObserver != nil, !self.seekInFlight,
+        ) { [weak self] time in
+            Task { @MainActor [weak self] in
+                guard let self, request == self.generation, self.observing,
+                    self.isPlaying, !self.isScrubbing, !self.seekInFlight,
                     self.pendingSeek == nil, time.seconds.isFinite
                 else {
                     return
                 }
                 self.position = min(self.duration, max(0, time.seconds))
-                if self.isPlaying && self.position >= self.duration - 0.05 {
-                    self.isPlaying = false
+            }
+        }
+        if let item = player.currentItem {
+            endObserver = NotificationCenter.default.addObserver(
+                forName: .AVPlayerItemDidPlayToEndTime, object: item, queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    guard let self, request == self.generation, self.isPlaying,
+                        !self.seekInFlight, self.pendingSeek == nil
+                    else {
+                        return
+                    }
+                    self.pause()
+                    self.position = self.duration
                 }
             }
         }
     }
 
-    func prepare(project: MatchProject, source: URL) async throws {
+    private func removeObservers() {
+        if let timeObserver {
+            player.removeTimeObserver(timeObserver)
+        }
+        if let endObserver {
+            NotificationCenter.default.removeObserver(endObserver)
+        }
+        timeObserver = nil
+        endObserver = nil
+    }
+
+    private func reset(duration: Double, position: Double) {
         generation &+= 1
-        let request = generation
-        isPreparing = true
-        isReady = false
+        interactionRevision &+= 1
         pause()
-        duration = project.condensedDuration
+        player.currentItem?.cancelPendingSeeks()
         pendingSeek = nil
-        position = min(project.editorState?.playheadTime ?? 0, duration)
+        seekInFlight = false
+        isScrubbing = false
+        isReady = false
+        isPreparing = true
+        self.duration = duration
+        self.position = min(duration, max(0, position))
+    }
+
+    func prepare(project: MatchProject, source: URL) async throws {
+        reset(duration: project.condensedDuration, position: project.editorState?.playheadTime ?? 0)
+        let request = generation
+        isBuilding = true
         do {
             let composition = try await CompositionBuilder.build(source: source, project: project)
+            try Task.checkCancellation()
             guard request == generation else {
                 return
             }
-            let target = pendingSeek ?? position
-            pendingSeek = nil
-            seekInFlight = false
+            isBuilding = false
             player.replaceCurrentItem(with: AVPlayerItem(asset: composition))
-            isReady = true
-            isPreparing = false
-            scrub(to: target)
+            installObservers()
+            pendingSeek = pendingSeek ?? position
+            performPendingSeek()
         } catch {
-            if request == generation {
-                isPreparing = false
+            guard request == generation else {
+                return
             }
-            throw error
+            isBuilding = false
+            isPreparing = false
+            if !Task.isCancelled {
+                throw error
+            }
         }
     }
 
-    func scrub(to time: Double) {
+    func beginScrubbing() {
+        interactionRevision &+= 1
+        isScrubbing = true
         pause()
-        let clamped = min(duration, max(0, time))
-        position = clamped
-        pendingSeek = clamped
+    }
+
+    func endScrubbing(at time: Double) {
+        scrub(to: time)
+        isScrubbing = false
+    }
+
+    func scrub(to time: Double) {
+        guard time.isFinite else {
+            return
+        }
+        interactionRevision &+= 1
+        pause()
+        position = min(duration, max(0, time))
+        pendingSeek = position
         performPendingSeek()
     }
 
     private func performPendingSeek() {
-        guard isReady, !seekInFlight, let target = pendingSeek else {
+        guard !isBuilding, player.currentItem != nil, !seekInFlight, let target = pendingSeek else {
             return
         }
         pendingSeek = nil
         seekInFlight = true
         let request = generation
-        let tolerance = CMTime(seconds: 1.0 / 30.0, preferredTimescale: 600)
         player.seek(
             to: CMTime(seconds: target, preferredTimescale: 60_000),
-            toleranceBefore: tolerance, toleranceAfter: tolerance
-        ) {
-            [weak self] _ in
-
-            Task {
-                @MainActor [weak self] in
-
+            toleranceBefore: .zero, toleranceAfter: .zero
+        ) { [weak self] finished in
+            Task { @MainActor [weak self] in
                 guard let self, request == self.generation else {
                     return
                 }
                 self.seekInFlight = false
-                self.performPendingSeek()
+                if self.pendingSeek != nil {
+                    self.performPendingSeek()
+                } else {
+                    self.isPreparing = false
+                    self.isReady = finished
+                    if self.isPlaying && finished {
+                        self.player.play()
+                    }
+                }
             }
         }
     }
 
     func togglePlayback() {
-        guard isReady else {
+        guard isReady, !isScrubbing else {
             return
         }
         if isPlaying {
             pause()
         } else {
-            if position >= duration - 0.05 {
+            if position >= duration {
                 scrub(to: 0)
             }
-            player.play()
             isPlaying = true
+            if !seekInFlight && pendingSeek == nil {
+                player.play()
+            }
         }
     }
 
@@ -126,12 +189,16 @@ final class EditorPlayback {
 
     func stop() {
         generation &+= 1
+        interactionRevision &+= 1
         pause()
-        if let timeObserver {
-            player.removeTimeObserver(timeObserver)
-        }
-        timeObserver = nil
+        observing = false
+        removeObservers()
+        player.currentItem?.cancelPendingSeeks()
         player.replaceCurrentItem(with: nil)
+        pendingSeek = nil
+        seekInFlight = false
+        isBuilding = false
+        isScrubbing = false
         isReady = false
         isPreparing = false
     }
@@ -149,7 +216,13 @@ struct EditorVideoSurface: UIViewRepresentable {
     }
 
     func updateUIView(_ view: PlayerSurfaceView, context: Context) {
-        view.playerLayer.player = player
+        if view.playerLayer.player !== player {
+            view.playerLayer.player = player
+        }
+    }
+
+    static func dismantleUIView(_ view: PlayerSurfaceView, coordinator: ()) {
+        view.playerLayer.player = nil
     }
 }
 

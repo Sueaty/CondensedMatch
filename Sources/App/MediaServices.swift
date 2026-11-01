@@ -2,25 +2,7 @@ import AVFoundation
 import UIKit
 import Photos
 import PhotosUI
-import CoreTransferable
 import UniformTypeIdentifiers
-
-struct ImportedMovie: Transferable, Sendable {
-    let url: URL
-    static var transferRepresentation: some TransferRepresentation {
-        FileRepresentation(contentType: .movie) { movie in
-
-            SentTransferredFile(movie.url)
-        } importing: { received in
-
-            let destination = FileManager.default.temporaryDirectory
-                .appendingPathComponent(UUID().uuidString).appendingPathExtension(
-                    received.file.pathExtension.isEmpty ? "mov" : received.file.pathExtension)
-            try FileManager.default.copyItem(at: received.file, to: destination)
-            return ImportedMovie(url: destination)
-        }
-    }
-}
 
 enum StorageSpace {
     static func available(at url: URL) -> Int64? {
@@ -35,7 +17,7 @@ enum StorageSpace {
 }
 
 actor SourceAssetStore {
-    func importVideo(at url: URL, repository: ProjectRepository) async throws -> MatchProject {
+    func importVideo(at url: URL, root: URL) async throws -> MatchProject {
         let asset = AVURLAsset(url: url)
         guard try await asset.load(.isPlayable) else {
             throw MatchError.invalidMedia(
@@ -55,7 +37,14 @@ actor SourceAssetStore {
         let audio = try await asset.loadTracks(withMediaType: .audio)
         let bytes = (try url.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init) ?? 0
         let id = UUID()
-        let folder = try await repository.directory(for: id)
+        let folder = root.appendingPathComponent(id.uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        var imported = false
+        defer {
+            if !imported {
+                try? FileManager.default.removeItem(at: folder)
+            }
+        }
         try StorageSpace.require(bytes + 100_000_000, at: folder)
         let filename = "source." + (url.pathExtension.isEmpty ? "mov" : url.pathExtension)
         let destination = folder.appendingPathComponent(filename)
@@ -69,16 +58,8 @@ actor SourceAssetStore {
             frameRate: fps > 0 ? fps : 30, hasAudio: !audio.isEmpty, byteCount: bytes)
         var project = MatchProject(
             id: id, title: "Match · " + Date().formatted(.dateTime.month(.abbreviated).day()), source: source)
-        // Import opens a usable manual edit without requiring analysis.
+        // Import opens a full-source edit.
         project.segments = [PointSegment(start: 0, end: duration)]
-        if source.height > source.width {
-            project.warnings.append(
-                "Portrait video: detection works best with a fixed landscape camera behind the baseline.")
-        }
-        if !source.hasAudio {
-            project.warnings.append(
-                "No audio track. Detection will rely on court movement; review the result carefully.")
-        }
         if source.width > 3840 || source.height > 2160 {
             project.warnings.append(
                 "Above 4K: this recording may take longer to process and has not been validated.")
@@ -86,22 +67,7 @@ actor SourceAssetStore {
         if let free = StorageSpace.available(at: folder), free < 2_000_000_000 {
             project.warnings.append("Storage is running low. You may need to free space before exporting.")
         }
-        let generator = AVAssetImageGenerator(asset: asset)
-        generator.appliesPreferredTrackTransform = true
-        generator.maximumSize = CGSize(width: 1200, height: 800)
-        do {
-            let (image, _) = try await generator.image(
-                at: CMTime(seconds: min(3, duration / 2), preferredTimescale: 600))
-            if let jpeg = UIImage(cgImage: image).jpegData(compressionQuality: 0.8) {
-                try jpeg.write(
-                    to: folder.appendingPathComponent("thumbnail.jpg"),
-                    options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
-            }
-        } catch {
-            project.warnings.append(
-                "A thumbnail could not be generated. You can still open and review the source.")
-        }
-        try await repository.save(project)
+        imported = true
         return project
     }
 }

@@ -1,70 +1,61 @@
 import Foundation
 import SwiftUI
-import PhotosUI
+import UniformTypeIdentifiers
 
 @MainActor
 @Observable
 final class AppStore {
-    var projects: [MatchProject] = []
+    private(set) var activeProject: MatchProject?
     var errorMessage: String?
-    var notice: String?
     var importing = false
     var importProgress = 0.0
-    var activeAnalysisID: UUID?
-    var analysisProgress = 0.0
-    var root: URL
-    private var repository: ProjectRepository?
+    let root: URL
     private let assets = SourceAssetStore()
-    private let analyzer = AnalysisCoordinator()
-    private var analysisTask: Task<Void, Never>?
     private var importTransfer: Progress?
-    private var saveRevisions: [UUID: UInt64] = [:]
 
     init(root: URL? = nil) {
-        self.root = root ?? URL.documentsDirectory.appendingPathComponent("Matches", isDirectory: true)
+        self.root = root ?? URL.cachesDirectory.appendingPathComponent("EditingSession", isDirectory: true)
         do {
-            repository = try ProjectRepository(root: self.root)
+            // A new process starts a fresh session. Backgrounding does not recreate the store.
+            if FileManager.default.fileExists(atPath: self.root.path) {
+                try FileManager.default.removeItem(at: self.root)
+            }
+            if root == nil {
+                let legacy = URL.documentsDirectory.appendingPathComponent("Matches", isDirectory: true)
+                if FileManager.default.fileExists(atPath: legacy.path) {
+                    try FileManager.default.removeItem(at: legacy)
+                }
+            }
+            try FileManager.default.createDirectory(at: self.root, withIntermediateDirectories: true)
         } catch {
             errorMessage = error.localizedDescription
         }
     }
-    func load() async {
-        guard let repository else {
-            return
-        }
-        do {
-            let result = try await repository.load()
-            projects = result.projects
-            for project in result.projects
-            where project.editorIsAuthoritative != true || project.editorState == nil {
-                var migrated = project
-                try migrated.activateEditor()
-                _ = await save(migrated)
-            }
-            if result.unreadableCount > 0 {
-                notice =
-                    "\(result.unreadableCount) project(s) could not be opened. Their files have been preserved in On My iPhone → Rally Cut → Matches."
-            }
-        } catch {
-            errorMessage = error.localizedDescription
-        }
-    }
+
     func project(_ id: UUID) -> MatchProject? {
-        projects.first {
-            $0.id == id
+        activeProject?.id == id ? activeProject : nil
+    }
+
+    func endSession() {
+        activeProject = nil
+        do {
+            if FileManager.default.fileExists(atPath: root.path) {
+                try FileManager.default.removeItem(at: root)
+            }
+        } catch {
+            errorMessage = error.localizedDescription
         }
     }
+
     func folder(_ id: UUID) -> URL {
         root.appendingPathComponent(id.uuidString, isDirectory: true)
     }
+
     func sourceURL(_ project: MatchProject) -> URL {
         folder(project.id).appendingPathComponent(project.source.filename)
     }
-    func thumbnailURL(_ project: MatchProject) -> URL {
-        folder(project.id).appendingPathComponent("thumbnail.jpg")
-    }
 
-    func importPhoto(_ item: PhotosPickerItem) async -> UUID? {
+    func importPhoto(_ provider: NSItemProvider) async -> UUID? {
         importing = true
         importProgress = 0
         defer {
@@ -72,97 +63,79 @@ final class AppStore {
             importTransfer = nil
         }
         do {
-            let movie: ImportedMovie? = try await withCheckedThrowingContinuation { continuation in
-
-                importTransfer = item.loadTransferable(type: ImportedMovie.self) { result in
-                    continuation.resume(with: result)
+            let movieURL: URL = try await withCheckedThrowingContinuation { continuation in
+                importTransfer = provider.loadFileRepresentation(forTypeIdentifier: UTType.movie.identifier) { url, error in
+                    do {
+                        if let error {
+                            throw error
+                        }
+                        guard let url else {
+                            throw MatchError.invalidMedia(
+                                "The selected video is unavailable. Download it in Photos, then try again.")
+                        }
+                        // The provider removes its temporary file after this callback returns.
+                        let destination = FileManager.default.temporaryDirectory
+                            .appendingPathComponent(UUID().uuidString)
+                            .appendingPathExtension(url.pathExtension.isEmpty ? "mov" : url.pathExtension)
+                        try FileManager.default.copyItem(at: url, to: destination)
+                        continuation.resume(returning: destination)
+                    } catch {
+                        continuation.resume(throwing: error)
+                    }
                 }
-            }
-            guard let movie else {
-                throw MatchError.invalidMedia(
-                    "The selected video is unavailable. Download it in Photos, then try again.")
             }
             importProgress = 0.9
             defer {
-                try? FileManager.default.removeItem(at: movie.url)
+                try? FileManager.default.removeItem(at: movieURL)
             }
-            return await importURL(movie.url)
+            return await importURL(movieURL)
         } catch {
             errorMessage = error.localizedDescription
             return nil
         }
     }
+
     func refreshImportProgress() {
         if let importTransfer {
             importProgress = importTransfer.fractionCompleted * 0.9
         }
     }
+
     func cancelImport() {
         importTransfer?.cancel()
     }
+
     func importURL(_ url: URL) async -> UUID? {
-        guard let repository else {
-            return nil
-        }
         do {
-            let project = try await assets.importVideo(at: url, repository: repository)
-            projects.insert(project, at: 0)
+            let project = try await assets.importVideo(at: url, root: root)
+            activeProject = project
             return project.id
         } catch {
             errorMessage = error.localizedDescription
             return nil
         }
     }
+
     @discardableResult
-    func save(_ project: MatchProject) async -> Bool {
-        guard let repository else {
+    func updateProject(_ project: MatchProject) async -> Bool {
+        guard activeProject?.id == project.id else {
             return false
         }
-        guard
-            let index = projects.firstIndex(where: {
-                $0.id == project.id
-            })
-        else {
-            return false
-        }
-        let previous = projects[index]
-        let revision = (saveRevisions[project.id] ?? 0) &+ 1
-        saveRevisions[project.id] = revision
-        // Publish before awaiting disk I/O, so concurrent editing and checkpoints
-        // always read the latest state rather than a previous save's snapshot.
-        projects[index] = project
         do {
-            try await repository.save(project)
+            guard let editor = project.editorState,
+                abs(editor.sourceDuration - project.source.duration) < 0.000_001
+            else {
+                throw EditorCoreError.invalidTimeline
+            }
+            try editor.validate()
+            activeProject = project
             return true
         } catch {
-            if saveRevisions[project.id] == revision,
-                let index = projects.firstIndex(where: {
-                    $0.id == project.id
-                })
-            {
-                projects[index] = previous
-            }
             errorMessage = error.localizedDescription
             return false
         }
     }
-    func setCourt(_ region: NormalizedRect, id: UUID) async -> Bool {
-        guard var p = project(id) else {
-            return false
-        }
-        p.courtRegion = region
-        p.analysis = nil
-        p.pendingAnalysisSegments = nil
-        p.status = .setup
-        return await save(p)
-    }
-    func manualReview(_ id: UUID) async {
-        guard var p = project(id) else {
-            return
-        }
-        p.status = .ready
-        await save(p)
-    }
+
     func edit(_ id: UUID, segments: [PointSegment]) async {
         guard var p = project(id) else {
             return
@@ -179,19 +152,21 @@ final class AppStore {
                 p.editorState = editor
             }
             p.edit(segments)
-            await save(p)
+            await updateProject(p)
         } catch {
             errorMessage = error.localizedDescription
         }
     }
+
     func undo(_ id: UUID) async {
         guard var p = project(id) else {
             return
         }
 
         p.undo()
-        await save(p)
+        await updateProject(p)
     }
+
     @discardableResult
     func updateEditor(_ id: UUID, _ change: (inout EditorState) throws -> Void) async -> Bool {
         guard var project = project(id), var editor = project.editorState else {
@@ -204,113 +179,10 @@ final class AppStore {
             if editor.revision != oldRevision {
                 project.exportFilename = nil
             }
-            return await save(project)
+            return await updateProject(project)
         } catch {
             errorMessage = error.localizedDescription
             return false
         }
-    }
-    @discardableResult
-    func applyAnalysisSuggestions(_ id: UUID) async -> Bool {
-        guard var p = project(id), p.applyAnalysisSuggestions() else {
-            return false
-        }
-        return await save(p)
-    }
-    func dismissAnalysisSuggestions(_ id: UUID) async {
-        guard var p = project(id) else {
-            return
-        }
-        p.pendingAnalysisSegments = nil
-        await save(p)
-    }
-    func delete(_ id: UUID, includingMedia: Bool) async {
-        guard id != activeAnalysisID, let repository else {
-            return
-        }
-        do {
-            try await repository.delete(id, includingMedia: includingMedia)
-
-            projects.removeAll {
-                $0.id == id
-            }
-        } catch {
-            errorMessage = error.localizedDescription
-        }
-    }
-    func analyze(_ id: UUID) {
-        guard activeAnalysisID == nil, var p = project(id), repository != nil else {
-            return
-        }
-        activeAnalysisID = id
-        analysisProgress = 0
-        p.status = .analyzing
-        if let index = projects.firstIndex(where: {
-            $0.id == id
-        }) {
-            projects[index].status = .analyzing
-        }
-        let initial = p
-        analysisTask = Task {
-            defer {
-                activeAnalysisID = nil
-                analysisTask = nil
-                UIApplication.shared.isIdleTimerDisabled = false
-            }
-            UIApplication.shared.isIdleTimerDisabled = true
-            do {
-                // The task may start after a manual edit; save the current project,
-                // not the snapshot captured when analysis was requested.
-                guard let current = project(id), await save(current) else {
-                    throw MatchError.persistence("Analysis could not start.")
-                }
-                let result = try await analyzer.analyze(project: initial, source: sourceURL(initial)) {
-                    [weak self] update in
-                    guard let self else {
-                        throw CancellationError()
-                    }
-                    try await self.checkpoint(id: id, update: update)
-                }
-                try Task.checkCancellation()
-                guard var latest = project(id) else {
-                    return
-                }
-                latest.receiveAnalysis(result.0, suggestions: result.1)
-                if !(await save(latest)) {
-                    throw MatchError.persistence(
-                        "The completed analysis could not be committed. Free storage and retry.")
-                }
-            } catch {
-                if var latest = project(id) {
-                    latest.status = .interrupted
-                    // Remain actionable in this session even if storage is unavailable.
-                    if let index = projects.firstIndex(where: {
-                        $0.id == id
-                    }) {
-                        projects[index] = latest
-                    }
-                    await save(latest)
-                }
-                if !(error is CancellationError) {
-                    errorMessage =
-                        "Analysis paused. \(error.localizedDescription) You can retry or edit manually."
-                }
-            }
-        }
-    }
-    private func checkpoint(id: UUID, update: AnalysisUpdate) async throws {
-        try Task.checkCancellation()
-        guard var p = project(id) else {
-            throw CancellationError()
-        }
-        p.analysis = update.record
-        p.status = .analyzing
-        guard await save(p) else {
-            throw MatchError.persistence("Analysis progress could not be saved.")
-        }
-        analysisProgress = update.progress
-    }
-    func pauseAnalysis() {
-        analysisTask?.cancel()
     }
 }

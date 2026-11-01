@@ -5,22 +5,42 @@ public struct EditorClip: Identifiable, Codable, Equatable, Sendable {
     public var sourceStart: Double
     public var sourceEnd: Double
     public var isIncluded: Bool
+    /// Original bounds remain available for extending a trimmed clip. Optional for older projects.
+    public var untrimmedSourceStart: Double?
+    public var untrimmedSourceEnd: Double?
 
     public init(
         id: UUID = UUID(),
         sourceStart: Double,
         sourceEnd: Double,
-        isIncluded: Bool = true
+        isIncluded: Bool = true,
+        untrimmedSourceStart: Double? = nil,
+        untrimmedSourceEnd: Double? = nil
     ) {
         self.id = id
         self.sourceStart = sourceStart
         self.sourceEnd = sourceEnd
         self.isIncluded = isIncluded
+        self.untrimmedSourceStart = untrimmedSourceStart
+        self.untrimmedSourceEnd = untrimmedSourceEnd
     }
 
     public var duration: Double {
         max(0, sourceEnd - sourceStart)
     }
+
+    public var availableSourceStart: Double {
+        untrimmedSourceStart ?? sourceStart
+    }
+
+    public var availableSourceEnd: Double {
+        untrimmedSourceEnd ?? sourceEnd
+    }
+}
+
+public enum EditorTrimEdge: String, Sendable {
+    case start
+    case end
 }
 
 public struct EditorSnapshot: Codable, Equatable, Sendable {
@@ -39,26 +59,36 @@ public enum EditorCoreError: LocalizedError, Equatable, Sendable {
     case invalidTimeline
     case invalidPlayhead
     case splitAtBoundary
+    case clipTooShort
+    case tooManyClips
     case noSelectedClip
     case cannotExcludeOnlyIncludedClip
     case clipNotFound
     case clipAlreadyIncluded
+    case invalidTrim
 
     public var errorDescription: String? {
         switch self {
         case .invalidTimeline: "The edit timeline contains an invalid or overlapping source range."
         case .invalidPlayhead: "Move the playhead inside a retained clip before splitting."
-        case .splitAtBoundary: "Move at least one frame away from the clip boundary before splitting."
+        case .splitAtBoundary:
+            "Move the playhead farther inside the clip. Leave at least 0.15s and one video frame on each side."
+        case .clipTooShort: "Each clip needs at least 0.15s of video and one complete frame."
+        case .tooManyClips:
+            "You've reached the limit of \(EditorState.maximumIncludedClipCount) clips. Remove a clip before adding another."
         case .noSelectedClip: "Select a clip before removing it."
         case .cannotExcludeOnlyIncludedClip: "At least one clip must remain in the edit."
         case .clipNotFound: "This clip is no longer part of the edit."
         case .clipAlreadyIncluded: "This clip is already included in the edit."
+        case .invalidTrim: "Keep at least 0.15s and one frame within the clip's original boundaries."
         }
     }
 }
 
 public struct EditorState: Codable, Equatable, Sendable {
     public static let maximumHistoryCount = 100
+    public static let maximumIncludedClipCount = 150
+    public static let minimumClipDuration = 0.15
 
     public var sourceDuration: Double
     public private(set) var clips: [EditorClip]
@@ -117,6 +147,43 @@ public struct EditorState: Codable, Equatable, Sendable {
         !redoStack.isEmpty
     }
 
+    public func canSplit(atEditTime time: Double, minimumClipDuration: Double) -> Bool {
+        splitRestriction(atEditTime: time, minimumClipDuration: minimumClipDuration) == nil
+    }
+
+    /// Frame-independent checks run immediately; the resolver supplies the source's actual minimum
+    /// frame duration for both the final eligibility check and the committed edit.
+    public func splitRestriction(atEditTime time: Double, minimumClipDuration: Double? = nil)
+        -> EditorCoreError?
+    {
+        guard time.isFinite,
+            let clip = try? includedClip(atEditTime: time),
+            let source = try? sourceTime(atEditTime: time)
+        else {
+            return .invalidPlayhead
+        }
+        guard includedClips.count < Self.maximumIncludedClipCount else {
+            return .tooManyClips
+        }
+        let epsilon = 0.000_000_001
+        guard source - clip.sourceStart > epsilon, clip.sourceEnd - source > epsilon else {
+            return .splitAtBoundary
+        }
+        if let supplied = minimumClipDuration, !supplied.isFinite || supplied <= 0 {
+            return .invalidPlayhead
+        }
+        let minimum = max(Self.minimumClipDuration, minimumClipDuration ?? Self.minimumClipDuration)
+        guard clip.duration + epsilon >= minimum * 2 else {
+            return .clipTooShort
+        }
+        guard source - clip.sourceStart + epsilon >= minimum,
+            clip.sourceEnd - source + epsilon >= minimum
+        else {
+            return .splitAtBoundary
+        }
+        return nil
+    }
+
     /// Builds a source-ordered edit from retained ranges, keeping gaps restorable.
     public static func fromSegments(_ segments: [PointSegment], sourceDuration: Double) throws -> EditorState
     {
@@ -141,12 +208,20 @@ public struct EditorState: Codable, Equatable, Sendable {
         )
     }
 
-    /// Replaces the retained edit as one undoable operation (for accepted AI suggestions).
+    /// Replaces the retained edit as one undoable operation.
     public mutating func replace(with segments: [PointSegment]) throws {
         guard !Timeline.ranges(segments, duration: sourceDuration).isEmpty else {
             throw EditorCoreError.invalidTimeline
         }
         let replacement = try Self.fromSegments(segments, sourceDuration: sourceDuration)
+        guard replacement.includedClips.count <= Self.maximumIncludedClipCount else {
+            throw EditorCoreError.tooManyClips
+        }
+        guard
+            replacement.includedClips.allSatisfy({ $0.duration + 0.000_000_001 >= Self.minimumClipDuration })
+        else {
+            throw EditorCoreError.clipTooShort
+        }
         let before = snapshot
         clips = replacement.clips
         selectedClipID = replacement.selectedClipID
@@ -227,10 +302,9 @@ public struct EditorState: Codable, Equatable, Sendable {
 
     /// Splits the retained clip under the edit playhead and selects the new right-hand clip.
     public mutating func split(atEditTime editTime: Double, minimumClipDuration: Double) throws {
-        guard minimumClipDuration.isFinite, minimumClipDuration > 0,
-            editTime.isFinite, editTime > 0, editTime < totalDuration
-        else {
-            throw EditorCoreError.invalidPlayhead
+        if let restriction = splitRestriction(atEditTime: editTime, minimumClipDuration: minimumClipDuration)
+        {
+            throw restriction
         }
 
         var cursor = 0.0
@@ -239,22 +313,21 @@ public struct EditorState: Codable, Equatable, Sendable {
             let editEnd = cursor + clip.duration
             if editTime > cursor && editTime < editEnd {
                 let sourceSplit = clip.sourceStart + editTime - cursor
-                guard sourceSplit - clip.sourceStart >= minimumClipDuration,
-                    clip.sourceEnd - sourceSplit >= minimumClipDuration
-                else {
-                    throw EditorCoreError.splitAtBoundary
-                }
                 let before = snapshot
                 let left = EditorClip(
                     id: clip.id,
                     sourceStart: clip.sourceStart,
                     sourceEnd: sourceSplit,
-                    isIncluded: true
+                    isIncluded: true,
+                    untrimmedSourceStart: clip.availableSourceStart,
+                    untrimmedSourceEnd: sourceSplit
                 )
                 let right = EditorClip(
                     sourceStart: sourceSplit,
                     sourceEnd: clip.sourceEnd,
-                    isIncluded: true
+                    isIncluded: true,
+                    untrimmedSourceStart: sourceSplit,
+                    untrimmedSourceEnd: clip.availableSourceEnd
                 )
                 clips.replaceSubrange(index...index, with: [left, right])
                 selectedClipID = right.id
@@ -265,6 +338,45 @@ public struct EditorState: Codable, Equatable, Sendable {
             cursor = editEnd
         }
         throw EditorCoreError.splitAtBoundary
+    }
+
+    /// Changes one edge, ripples following clips, and records the whole gesture as one edit.
+    public mutating func trim(
+        _ clipID: EditorClip.ID,
+        edge: EditorTrimEdge,
+        toSourceTime time: Double,
+        minimumClipDuration: Double
+    ) throws {
+        guard
+            let index = clips.firstIndex(where: {
+                $0.id == clipID
+            }), clips[index].isIncluded
+        else {
+            throw EditorCoreError.clipNotFound
+        }
+        let clip = clips[index]
+        let start = edge == .start ? time : clip.sourceStart
+        let end = edge == .end ? time : clip.sourceEnd
+        guard time.isFinite, minimumClipDuration.isFinite, minimumClipDuration > 0,
+            start >= clip.availableSourceStart, end <= clip.availableSourceEnd,
+            end - start + 0.000_000_001 >= max(Self.minimumClipDuration, minimumClipDuration)
+        else {
+            throw EditorCoreError.invalidTrim
+        }
+        guard start != clip.sourceStart || end != clip.sourceEnd else {
+            return
+        }
+        let before = snapshot
+        let editStart = clips[..<index].filter(\.isIncluded).reduce(0) {
+            $0 + $1.duration
+        }
+        clips[index].untrimmedSourceStart = clip.availableSourceStart
+        clips[index].untrimmedSourceEnd = clip.availableSourceEnd
+        clips[index].sourceStart = start
+        clips[index].sourceEnd = end
+        selectedClipID = clipID
+        playheadTime = edge == .start ? editStart : editStart + end - start
+        commit(before: before)
     }
 
     /// Removes the selected clip from the condensed timeline without losing its source range.
@@ -308,6 +420,12 @@ public struct EditorState: Codable, Equatable, Sendable {
         }
         guard !clips[index].isIncluded else {
             throw EditorCoreError.clipAlreadyIncluded
+        }
+        guard includedClips.count < Self.maximumIncludedClipCount else {
+            throw EditorCoreError.tooManyClips
+        }
+        guard clips[index].duration + 0.000_000_001 >= Self.minimumClipDuration else {
+            throw EditorCoreError.clipTooShort
         }
         let before = snapshot
         clips[index].isIncluded = true
@@ -358,14 +476,18 @@ public struct EditorState: Codable, Equatable, Sendable {
         for clip in clips {
             guard clip.sourceStart.isFinite,
                 clip.sourceEnd.isFinite,
-                clip.sourceStart >= previousEnd,
+                clip.availableSourceStart.isFinite,
+                clip.availableSourceEnd.isFinite,
+                clip.availableSourceStart >= previousEnd,
+                clip.sourceStart >= clip.availableSourceStart,
                 clip.sourceEnd > clip.sourceStart,
-                clip.sourceEnd <= sourceDuration,
+                clip.sourceEnd <= clip.availableSourceEnd,
+                clip.availableSourceEnd <= sourceDuration,
                 ids.insert(clip.id).inserted
             else {
                 throw EditorCoreError.invalidTimeline
             }
-            previousEnd = clip.sourceEnd
+            previousEnd = clip.availableSourceEnd
         }
     }
 

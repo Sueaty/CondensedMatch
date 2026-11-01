@@ -21,7 +21,8 @@ public enum EditorTimelineLayout {
     public static func tiles(
         for editor: EditorState,
         pointsPerSecond: Double,
-        tileDuration: Double
+        tileDuration: Double,
+        visibleRange: ClosedRange<Double>? = nil
     ) -> [EditorTimelineTile] {
         guard pointsPerSecond.isFinite, pointsPerSecond > 0,
             tileDuration.isFinite, tileDuration > 0
@@ -32,7 +33,19 @@ public enum EditorTimelineLayout {
         var editCursor = 0.0
         for (index, clip) in editor.includedClips.enumerated() {
             let count = Int(ceil(clip.duration / tileDuration))
-            for tileNumber in 0..<count {
+            let first =
+                visibleRange.map {
+                    max(0, Int(floor(($0.lowerBound - editCursor) / tileDuration)))
+                } ?? 0
+            let last =
+                visibleRange.map {
+                    min(count - 1, Int(floor(($0.upperBound - editCursor) / tileDuration)))
+                } ?? (count - 1)
+            guard first <= last else {
+                editCursor += clip.duration
+                continue
+            }
+            for tileNumber in first...last {
                 let offset = Double(tileNumber) * tileDuration
                 let duration = min(tileDuration, clip.duration - offset)
                 tiles.append(
@@ -62,6 +75,40 @@ public enum EditorTimelineLayout {
             return 0
         }
         return min(duration, max(0, offset / pointsPerSecond))
+    }
+}
+
+public enum EditorTimelineZoom {
+    public static let initialScale = 30.0
+    public static let minimumScale = 3.0
+    public static let maximumScale = 480.0
+
+    /// Stable source samples within each zoom level; widths stretch continuously between levels.
+    public static func thumbnailDuration(scale: Double) -> Double {
+        let bounded = scale.isFinite ? min(maximumScale, max(minimumScale, scale)) : initialScale
+        return pow(2, ceil(log2(60 / bounded)))
+    }
+
+    public static func scale(startingAt scale: Double, magnification: Double) -> Double {
+        guard scale.isFinite, scale > 0, magnification.isFinite, magnification > 0 else {
+            return initialScale
+        }
+        return min(maximumScale, max(minimumScale, scale * magnification))
+    }
+
+    /// Keeps the same edit time beneath the fixed playhead while the scale changes.
+    public static func contentOffset(editTime: Double, scale: Double, duration: Double) -> Double {
+        guard editTime.isFinite, scale.isFinite, scale > 0, duration.isFinite, duration >= 0 else {
+            return 0
+        }
+        return min(duration, max(0, editTime)) * scale
+    }
+
+    public static func rulerInterval(scale: Double) -> Double {
+        let desired = 70 / max(minimumScale, scale)
+        let power = pow(10, floor(log10(desired)))
+        let step = desired / power
+        return (step <= 1 ? 1 : step <= 2 ? 2 : step <= 5 ? 5 : 10) * power
     }
 }
 

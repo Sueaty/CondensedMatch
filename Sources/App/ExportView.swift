@@ -1,10 +1,10 @@
 import SwiftUI
 
 struct ExportView: View {
-    @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
     @Bindable var store: AppStore
     let projectID: UUID
+    let onDone: () -> Void
     @State private var exporter = ExportService()
     @State private var result: URL?
     @State private var message: String?
@@ -60,26 +60,33 @@ struct ExportView: View {
                             }
                             .frame(maxWidth: .infinity)
                         } else if let result {
-                            Button {
-                                share = true
-                            } label: {
-                                Label("Share video", systemImage: "square.and.arrow.up")
-                            }
-                            .buttonStyle(PrimaryButton())
-                            Button(saving ? "Saving…" : "Save to Photos") {
-                                saving = true
-                                Task {
-                                    do {
-                                        try await exporter.saveToPhotos(result)
-                                        message = "Saved to Photos."
-                                    } catch {
-                                        message = error.localizedDescription
+                            ExportActionsLayout {
+                                Button {
+                                    saving = true
+                                    Task {
+                                        do {
+                                            try await exporter.saveToPhotos(result)
+                                            message = "Saved to Photos."
+                                        } catch {
+                                            message = error.localizedDescription
+                                        }
+                                        saving = false
                                     }
-                                    saving = false
+                                } label: {
+                                    Text(saving ? "Saving…" : "Save to Photos")
+                                        .frame(maxHeight: .infinity)
                                 }
+                                .buttonStyle(PrimaryButton(dark: true))
+                                .disabled(saving)
+
+                                Button {
+                                    share = true
+                                } label: {
+                                    Label("Share video", systemImage: "square.and.arrow.up")
+                                        .frame(maxHeight: .infinity)
+                                }
+                                .buttonStyle(PrimaryButton())
                             }
-                            .buttonStyle(PrimaryButton(dark: true))
-                            .disabled(saving)
                         } else {
                             Button {
                                 export(project)
@@ -98,7 +105,7 @@ struct ExportView: View {
                 .toolbar {
                     ToolbarItem(placement: .confirmationAction) {
                         Button("Done") {
-                            dismiss()
+                            onDone()
                         }
                         .disabled(exporter.isRunning || saving)
                     }
@@ -138,13 +145,39 @@ struct ExportView: View {
                     return
                 }
                 latest.exportFilename = url.lastPathComponent
-                if await store.save(latest) {
+                if await store.updateProject(latest) {
                     result = url
                 }
             } catch {
                 message =
                     "Export did not complete. \(error.localizedDescription) Your original and edits are safe; you can retry."
             }
+        }
+    }
+}
+
+private struct ExportActionsLayout: Layout {
+    private let spacing: CGFloat = 12
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let width = proposal.replacingUnspecifiedDimensions().width
+        let availableWidth = max(0, width - spacing)
+        let heights = subviews.enumerated().map { index, subview in
+            subview.sizeThatFits(
+                ProposedViewSize(width: availableWidth * (index == 0 ? 0.7 : 0.3), height: nil)
+            ).height
+        }
+        return CGSize(width: width, height: heights.max() ?? 0)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let availableWidth = max(0, bounds.width - spacing)
+        for (index, subview) in subviews.enumerated() {
+            let width = availableWidth * (index == 0 ? 0.7 : 0.3)
+            let x = index == 0 ? bounds.minX : bounds.minX + availableWidth * 0.7 + spacing
+            subview.place(
+                at: CGPoint(x: x, y: bounds.midY), anchor: .leading,
+                proposal: ProposedViewSize(width: width, height: bounds.height))
         }
     }
 }

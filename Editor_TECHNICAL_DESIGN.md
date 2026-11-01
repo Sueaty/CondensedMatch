@@ -10,13 +10,26 @@
 
 이 문서는 SwiftUI + AVFoundation으로 단일 영상의 Split, ripple delete, Undo/Redo, 미리보기, Export를 구현하는 구조를 정의한다.
 
-> 구현 상태(2026-10-09): 고정 배율 타임라인의 스크롤 중 composition seek, 썸네일 타일, Split/Delete/Undo/Redo와 gap-free 타임라인 계산은 구현했다. 타임라인 핀치 줌은 제품 범위에서 제거했다. Split은 원본 비디오 sample presentation timestamp를 `AVAssetReader`로 읽는다. VFR fixture 테스트는 통과했으며 실제 기기 조작, 재사용 가능한 전체 sample index와 장시간 성능 측정은 아직 남았다.
+> 현재 상태(2026-10-20): Split/Delete/Undo/Redo, gap-free 시간 매핑, 가변 배율 타임라인을 구현한다. 표준 UIKit scroll/pan/pinch 입력을 SwiftUI 에디터에 통합하며, 검증 범위와 결과는 VLLO_EDITOR_INVESTIGATION.md를 따른다. Split은 원본 video sample presentation timestamp를 읽는다. 장시간 실제 영상 성능은 별도 검증 대상이다.
+
+### 2026-10-20 타임라인 입력 보완
+
+- `EditorTimeline`의 SwiftUI chrome 안에 UIScrollView와 표준 UIPanGestureRecognizer/UIPinchGestureRecognizer를 사용한다. 한 coordinator가 스크롤·확대의 입력 소유권을 조정한다. 실제 content width를 명시하고 화면 근처 썸네일만 배치한다.
+- 스크롤 drag 시작부터 감속 종료까지 사용자 스크럽이 소유권을 갖는다. player 기반 이동과 경계 드래그를 동시에 실행하지 않는다. 핀치는 시작 시 playhead 편집 시간을 고정하고 scale과 offset을 함께 갱신한다.
+- `EditorPlayback`은 player item 세대별 observer/seek callback을 검증한다. paused 상태의 오래된 time callback은 playhead를 갱신하지 않는다. stop/prepare는 seek 상태를 초기화한다.
+- 썸네일과 선택 윤곽의 backing view는 viewport 크기로 제한한다. 전체 시간축은 scroll 좌표만 제공한다. 썸네일 source sample은 단계별로 유지하고, 핀치 중에는 기존 이미지를 늘려 표시하며 새 decode를 중단한다. 단일 AVAssetImageGenerator가 최신 visible 요청만 직렬 처리하고, 240×140 이하 이미지 96개까지 보관한다. PlayerLayer는 player 객체가 실제 바뀔 때만 다시 연결한다.
+- 편집 명령은 UI에서 직렬화한다. source frame 조회 이후 revision과 취소를 확인하며, 화면 종료 시 진행 중 명령을 취소한다.
+- 아래 CMTime 모델 예시는 설계 목표다. 현재 `MatchCore` 도메인과 매핑은 Double 초를 사용하고, AVFoundation 경계에서 CMTime으로 변환한다. 프로젝트 장기 저장과 재실행 복원은 제공하지 않는다.
+- `EditorClip.untrimmedSourceStart/End`는 optional Codable 필드다. 필드가 없으면 기존 source bounds를 기본값으로 사용한다. Split은 복원 가능한 범위도 cut에서 나누므로 Trim 확장이 이웃 clip을 침범하지 않는다.
+- 흰색 경계 핸들과 관련 drag/hit-test/source-preview player는 제거한다. 기존 Trim 모델은 내부 편집 이력을 위해 유지하며 Export는 included source ranges를 사용한다.
+- Split은 공통 `EditorState.splitRestriction`과 `VideoFrameBoundaryResolver.splitBoundary`로 검사한다. 평균 FPS 기반 버튼 비활성화는 없으며, 불가능한 요청은 토스트로 안내한다. `EditorSplitLookup`이 3초 후 UI 대기를 해제하고 취소/오래된 결과를 차단한다. 포함 clip 150개, clip당 최소 0.15초, snap 거리 0.5초를 상한으로 둔다.
+- 관찰 범위와 테스트 결과는 [VLLO_EDITOR_INVESTIGATION.md](./VLLO_EDITOR_INVESTIGATION.md)를 따른다.
 
 ### 1.1 UI 프레임워크 결정
 
 - **핵심 UI는 SwiftUI로 구현한다.** 기존 RallyCut 앱의 `@Observable` 상태, 내비게이션, 디자인 시스템, 접근성 구조를 유지한다.
 - 재생, composition, thumbnail, export 같은 미디어 처리는 AVFoundation 서비스로 분리한다.
-- UIKit은 기본 아키텍처가 아니다. 실제 기기 프로파일링에서 SwiftUI 타임라인의 스크롤·셀 재사용 성능이 목표를 충족하지 못할 때만 `UICollectionView` 기반 타임라인을 `UIViewControllerRepresentable`로 한정적으로 래핑한다.
+- 에디터 화면은 SwiftUI를 유지한다. 타임라인 입력은 UIViewControllerRepresentable 안의 UIScrollView와 표준 UIKit recognizer로 통합해 스크롤과 핀치, Mirroring의 간접 입력을 처리한다. 썸네일은 viewport 안에서 UIImageView를 재사용해 렌더링한다.
 - 편집 명령과 시간 매핑은 UI 프레임워크에 의존하지 않는 `MatchCore` 순수 모델이 소유한다.
 
 핵심 원칙:
@@ -34,7 +47,7 @@
 ### 2.1 프레임워크
 
 - SwiftUI: 화면 구성, 내비게이션, 상태 렌더링, 접근성
-- UIKit: 성능 측정으로 필요성이 확인된 경우에만 타임라인 컬렉션 뷰 구현
+- UIKit: 타임라인 scroll/pan/pinch 입력
 - AVFoundation: 자산 검사, composition, 재생, 프레임 추출, Export
 - PhotosUI: 단일 영상 선택
 - Photos: 결과를 사진 보관함에 저장할 때만 사용
@@ -74,7 +87,7 @@ VideoEditorView ───────────────► EditorStore
 | `VideoEditorView` | 화면 배치, intent 전달, 상태 렌더링 | 시간 계산, AV composition 편집 |
 | `EditorStore` | 단일 `EditorState`, 명령 실행, 불변식 검증 | SwiftUI view 직접 조작 |
 | `TimelineView` | 타임라인 셀, playhead overlay, 제스처 | source range 변경 |
-| `TimelineLayout` | 고정 배율의 시간↔x, item frame, inset 계산 | seek, thumbnail decoding |
+| `TimelineLayout` | 가변 배율의 시간↔x, item frame, inset 계산 | seek, thumbnail decoding |
 | `PlaybackController` | player item 교체, play/pause/seek, time observation | 편집 정책 결정 |
 | `CompositionBuilder` | chunks를 연속 AVComposition으로 작성 | 사용자 상태 저장 |
 | `ThumbnailService` | 시간별 이미지 비동기 생성·캐시·취소 | 편집 상태 변경 |
@@ -232,7 +245,7 @@ Split 후보 `t`를 해당 source time으로 변환한 후 가장 가까운 유�
 2. VFR 또는 cadence가 불명확하면 주변 sample presentation timestamp를 읽어 가장 가까운 경계 사용. 현재는 Split 시점에 인접 구간을 읽으며, 반복 Split 성능이 필요하면 index/cache로 확장한다.
 3. 임시 preview seek는 AVFoundation tolerance를 사용할 수 있으나 Split 확정은 sample 경계가 준비된 뒤 실행
 
-동률이면 뒤쪽 프레임 경계를 선택한다. 정렬 후 왼쪽 또는 오른쪽이 한 프레임보다 짧으면 Split을 거부한다.
+동률이면 뒤쪽 프레임 경계를 선택한다. 정렬 후 왼쪽 또는 오른쪽이 0.15초 또는 한 프레임보다 짧으면 Split을 거부하고 토스트로 안내한다.
 
 ## 6. 타임라인 레이아웃
 
@@ -267,9 +280,11 @@ func time(for contentOffsetX: CGFloat, scale: TimelineScale) -> CMTime {
 
 실제 구현은 `CMTime.seconds`에서 NaN/무한대를 검사한다. UI에서 계산한 시간을 모델 timescale로 즉시 변환한다.
 
-### 6.3 고정 배율
+### 6.3 핀치 배율
 
-타임라인 배율은 30 pt/s로 고정한다. 핀치 제스처와 배율 변경 상태는 두지 않으며, playhead 기준 위치 탐색은 스크롤 오프셋을 편집 시간으로 변환해 처리한다.
+기본 30 pt/s, 범위 3–480 pt/s다. 핀치 시작의 편집 시간 T를 저장하고 배율 변경마다 contentOffset = T × scale로 복원한다. 눈금 간격은 화면에서 읽을 수 있는 1/2/5 × 10^n 간격으로 계산한다. 썸네일은 약 60pt 폭으로 배치하며 현재 화면 근처 시간 범위만 생성해 긴 영상에서도 전체 타일을 만들지 않는다.
+
+표준 UIPinchGestureRecognizer는 Mirroring의 trackpad transform 입력도 처리한다. 직접 touch pinch와 마우스/trackpad 간접 입력의 검증 결과는 구분한다.
 
 ### 6.4 스크롤 소유권
 
@@ -459,7 +474,8 @@ enum EditorIntent {
 버튼 enabled 조건:
 
 ```text
-canSplit = ready/playing && validInteriorFrameBoundary(playhead)
+canRequestSplit = ready/playing && notBusy && notScrolling
+canCommitSplit = validSourceFrameBoundary && atLeastPointFifteenSecondsAndOneFrameOnEachSide && includedClips < 150
 canDelete = selected != nil && chunks.count > 1 && notBusy
 canUndo = undoStack not empty && notBusy
 canRedo = redoStack not empty && notBusy
@@ -508,7 +524,8 @@ MVP 기본값:
 - 취소 요청은 한 번만 전달하고 UI를 `cancelling` 상태로 둔다.
 - 출력 URL은 성공 전까지 사용자 결과로 노출하지 않는다.
 - 공유가 끝나거나 사진 저장이 완료될 때까지 파일 수명을 유지한다.
-- 앱 시작 시 오래된 세션 임시 파일을 정리할 수 있으나 완료된 사용자 파일은 삭제하지 않는다.
+- 현재 프로젝트와 Undo/Redo는 AppStore 메모리에서만 유지한다. background 전환 시 세션과 파일을 정리하지 않는다.
+- 작업 파일과 export는 Library/Caches/EditingSession에 둔다. 메인 복귀 시 정리하고, 앱 시작 시 이전 프로세스의 잔여 파일 및 기존 Documents/Matches 보관함을 제거한다. 사진 앱에 저장하거나 외부로 공유한 파일은 삭제하지 않는다.
 
 ### 11.5 향후 고급 경로
 
@@ -578,7 +595,7 @@ enum EditorError: LocalizedError {
 
 - 시간↔좌표 round trip
 - 0과 전체 길이의 중앙 정렬
-- 고정 배율의 타일 폭과 시간↔좌표 변환
+- 다양한 배율의 타일 폭과 시간↔좌표 변환, pinch anchor 유지
 - bounds/rotation 변경 후 offset 재계산
 
 `EditCommandTests`

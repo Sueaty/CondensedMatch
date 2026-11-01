@@ -14,12 +14,12 @@ Example:
 
 ```swift
 Button {
-    showPrivacy = true
+    showDetails = true
 } label: {
-    Image(systemName: "lock.shield")
+    Image(systemName: "info.circle")
         .font(.title3)
         .padding(11)
         .background(.white.opacity(0.7), in: Circle())
 }
-.accessibilityLabel("Privacy and import guide")
+.accessibilityLabel("Details")
 ```
