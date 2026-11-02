@@ -53,7 +53,7 @@ struct VideoEditorView: View {
                     sourceHeight: project.source.height,
                     maxWidth: max(0, geometry.size.width - 32),
                     maxHeight: max(
-                        0, min(geometry.size.height * 0.42, geometry.size.height - controlsHeight - 36))
+                        0, min(geometry.size.height * 0.42, geometry.size.height - controlsHeight - RallyBar.height - 48))
                 )
                 VStack(spacing: 12) {
                     EditorVideoSurface(player: playback.player)
@@ -69,6 +69,10 @@ struct VideoEditorView: View {
                         }
                         .accessibilityIdentifier("editor-preview")
                         .frame(maxWidth: .infinity)
+
+                    RallyBar(state: .idle) {
+                        showToast("Rally detection is coming soon.")
+                    }
 
                     VStack(spacing: 12) {
                         HStack(spacing: 18) {
