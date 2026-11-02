@@ -53,9 +53,9 @@ struct VideoEditorView: View {
                     sourceHeight: project.source.height,
                     maxWidth: max(0, geometry.size.width - 32),
                     maxHeight: max(
-                        0, min(geometry.size.height * 0.42, geometry.size.height - controlsHeight - 48))
+                        0, min(geometry.size.height * 0.42, geometry.size.height - controlsHeight - 36))
                 )
-                VStack(spacing: 16) {
+                VStack(spacing: 12) {
                     EditorVideoSurface(player: playback.player)
                         .frame(width: previewSize.width, height: previewSize.height)
                         .background(.black, in: RoundedRectangle(cornerRadius: 14))
@@ -70,7 +70,7 @@ struct VideoEditorView: View {
                         .accessibilityIdentifier("editor-preview")
                         .frame(maxWidth: .infinity)
 
-                    VStack(spacing: 16) {
+                    VStack(spacing: 12) {
                         HStack(spacing: 18) {
                             Button {
                                 playback.togglePlayback()
@@ -226,7 +226,8 @@ struct VideoEditorView: View {
                         controlsHeight = height
                     }
                 }
-                .padding(16)
+                .padding(.vertical, 12)
+                .padding(.horizontal, 16)
             }
             .overlay(alignment: .top) {
                 if let toast {

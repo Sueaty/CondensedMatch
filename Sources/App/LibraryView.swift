@@ -9,7 +9,7 @@ struct LibraryView: View {
     var body: some View {
         NavigationStack(path: $path) {
             ScrollView {
-                VStack(alignment: .leading, spacing: 28) {
+                VStack(alignment: .leading, spacing: 20) {
                     HStack {
                         HStack(spacing: 8) {
                             Image(systemName: "tennisball.fill")

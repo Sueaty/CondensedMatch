@@ -14,7 +14,7 @@ struct ExportView: View {
         NavigationStack {
             if let project = store.project(projectID) {
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 26) {
+                    VStack(alignment: .leading, spacing: 18) {
                         Eyebrow(title: "Worth watching again")
 
                         Text(
@@ -29,7 +29,7 @@ struct ExportView: View {
                             sourceDuration: project.source.duration
                         )
 
-                        VStack(alignment: .leading, spacing: 14) {
+                        VStack(alignment: .leading, spacing: 10) {
                             LabeledContent("Source resolution") {
                                 Text("\(project.source.width) × \(project.source.height)")
                                     .foregroundStyle(MatchColor.muted)
@@ -44,7 +44,8 @@ struct ExportView: View {
                                 .typography(.caption)
                                 .foregroundStyle(MatchColor.muted)
                         }
-                        .padding(20)
+                        .padding(.vertical, 16)
+                        .padding(.horizontal, 20)
                         .background(.white.opacity(0.75), in: RoundedRectangle(cornerRadius: 18))
                         if let message {
                             WarningCard(text: message)
@@ -95,7 +96,8 @@ struct ExportView: View {
                             .buttonStyle(PrimaryButton())
                         }
                     }
-                    .padding(24)
+                    .padding(.vertical, 18)
+                    .padding(.horizontal, 24)
                 }
                 .background(MatchColor.paper)
                 .foregroundStyle(MatchColor.ink)
@@ -174,7 +176,7 @@ private struct ExportResultSummary: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .lastTextBaseline, spacing: 10) {
                 Text(timeLabel(condensedDuration))
                     .font(.system(size: 48, weight: .regular, design: .serif))
@@ -205,7 +207,8 @@ private struct ExportResultSummary: View {
             .tracking(0.5)
             .foregroundStyle(.white.opacity(0.65))
         }
-        .padding(22)
+        .padding(.vertical, 18)
+        .padding(.horizontal, 22)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(MatchColor.ink, in: RoundedRectangle(cornerRadius: 24))
         .accessibilityElement(children: .combine)

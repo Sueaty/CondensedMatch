@@ -7,7 +7,7 @@ struct PrimaryButton: ButtonStyle {
             .typography(.body)
             .bold()
             .frame(maxWidth: .infinity)
-            .padding(.vertical, 17)
+            .padding(.vertical, 14)
             .foregroundStyle(dark ? .white : MatchColor.ink)
             .background(dark ? MatchColor.ink : MatchColor.lime, in: RoundedRectangle(cornerRadius: 18))
             .opacity(configuration.isPressed ? 0.7 : 1)

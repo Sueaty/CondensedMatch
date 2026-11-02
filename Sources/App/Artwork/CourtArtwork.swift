@@ -84,7 +84,8 @@ struct CourtArtwork: View {
                         Spacer()
                     }
                 }
-                .padding(18)
+                .padding(.vertical, 14)
+                .padding(.horizontal, 18)
                 .foregroundStyle(.white.opacity(0.65))
             }
         }
