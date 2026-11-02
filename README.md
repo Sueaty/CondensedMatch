@@ -13,7 +13,7 @@ The main screen offers video import without a project list. Import a video from 
 ## Editing workflow
 
 - System Photos picker with provider progress, cancellation, owned source copy, and media validation.
-- Composition preview, playback controls, scrolling thumbnail timeline, pinch zoom, split/delete/restore, undo/redo, and export.
+- Composition preview, playback controls, scrolling thumbnail timeline, pinch zoom, split/delete, undo/redo, and export.
 - Non-destructive edits with in-memory clip state and history; the original source remains unchanged.
 - MP4 export with progress, cancellation/retry, source orientation, audio-track timing, Files/system sharing, and add-only Photos saving. Export re-encodes the retained footage.
 - Session-only source copies and exports, with file protection until first device unlock.

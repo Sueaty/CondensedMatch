@@ -61,7 +61,7 @@ final class MatchCoreTests: XCTestCase {
         XCTAssertEqual(editor.includedClips.map(\.sourceStart), [0, 20])
     }
 
-    func testEditorRestoreAndNewEditClearRedo() throws {
+    func testEditorExcludeAndNewEditClearRedo() throws {
         var editor = try EditorState(sourceDuration: 30)
         try editor.split(atEditTime: 10, minimumClipDuration: 1.0 / 30.0)
         let removedID = try XCTUnwrap(editor.selectedClipID)
@@ -79,11 +79,10 @@ final class MatchCoreTests: XCTestCase {
 
         try editor.select(removedID)
         try editor.excludeSelected()
-        try editor.restore(removedID)
-        XCTAssertTrue(
+        XCTAssertFalse(
             editor.clips.first(where: {
                 $0.id == removedID
-            })?.isIncluded ?? false)
+            })?.isIncluded ?? true)
     }
 
     func testEditorRejectsBoundarySplitAndOnlyClipExclusion() throws {
@@ -96,7 +95,7 @@ final class MatchCoreTests: XCTestCase {
         }
     }
 
-    func testLegacySegmentsBecomeRestorableEditorClipsWithoutChangingDuration() throws {
+    func testLegacySegmentsBecomeExcludedEditorClipsWithoutChangingDuration() throws {
         let segments = [PointSegment(start: 10, end: 20), PointSegment(start: 40, end: 55)]
         let edit = try EditorState.fromSegments(segments, sourceDuration: 100)
         XCTAssertEqual(edit.totalDuration, 25)

@@ -64,7 +64,6 @@ public enum EditorCoreError: LocalizedError, Equatable, Sendable {
     case noSelectedClip
     case cannotExcludeOnlyIncludedClip
     case clipNotFound
-    case clipAlreadyIncluded
     case invalidTrim
 
     public var errorDescription: String? {
@@ -79,7 +78,6 @@ public enum EditorCoreError: LocalizedError, Equatable, Sendable {
         case .noSelectedClip: "Select a clip before removing it."
         case .cannotExcludeOnlyIncludedClip: "At least one clip must remain in the edit."
         case .clipNotFound: "This clip is no longer part of the edit."
-        case .clipAlreadyIncluded: "This clip is already included in the edit."
         case .invalidTrim: "Keep at least 0.15s and one frame within the clip's original boundaries."
         }
     }
@@ -184,7 +182,7 @@ public struct EditorState: Codable, Equatable, Sendable {
         return nil
     }
 
-    /// Builds a source-ordered edit from retained ranges, keeping gaps restorable.
+    /// Builds a source-ordered edit from retained ranges, keeping gaps as excluded clips.
     public static func fromSegments(_ segments: [PointSegment], sourceDuration: Double) throws -> EditorState
     {
         let ranges = Timeline.ranges(segments, duration: sourceDuration)
@@ -407,32 +405,6 @@ public struct EditorState: Codable, Equatable, Sendable {
         let left = clips[..<index].last(where: \.isIncluded)
         self.selectedClipID = right?.id ?? left?.id
         playheadTime = min(joinTime, totalDuration)
-        commit(before: before)
-    }
-
-    public mutating func restore(_ id: EditorClip.ID) throws {
-        guard
-            let index = clips.firstIndex(where: {
-                $0.id == id
-            })
-        else {
-            throw EditorCoreError.clipNotFound
-        }
-        guard !clips[index].isIncluded else {
-            throw EditorCoreError.clipAlreadyIncluded
-        }
-        guard includedClips.count < Self.maximumIncludedClipCount else {
-            throw EditorCoreError.tooManyClips
-        }
-        guard clips[index].duration + 0.000_000_001 >= Self.minimumClipDuration else {
-            throw EditorCoreError.clipTooShort
-        }
-        let before = snapshot
-        clips[index].isIncluded = true
-        selectedClipID = id
-        playheadTime = clips[..<index].filter(\.isIncluded).reduce(0) {
-            $0 + $1.duration
-        }
         commit(before: before)
     }
 

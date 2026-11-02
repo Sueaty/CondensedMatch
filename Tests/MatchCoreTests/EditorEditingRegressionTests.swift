@@ -20,10 +20,6 @@ final class EditorEditingRegressionTests: XCTestCase {
         try editor.split(atEditTime: 100.5, minimumClipDuration: 1.0 / 30)
         XCTAssertEqual(editor.includedClips.count, 150)
         let atLimit = editor
-        XCTAssertThrowsError(try editor.restore(try XCTUnwrap(before.selectedClipID))) {
-            XCTAssertEqual($0 as? EditorCoreError, .tooManyClips)
-        }
-        XCTAssertEqual(editor, atLimit)
         let tooManyRanges = (0..<151).map {
             PointSegment(start: Double($0), end: Double($0) + 0.5)
         }
@@ -168,11 +164,7 @@ final class EditorEditingRegressionTests: XCTestCase {
                 editor.undo()
                 editor.redo()
             case 5:
-                if let removed = editor.clips.first(where: {
-                    !$0.isIncluded
-                }) {
-                    try editor.restore(removed.id)
-                }
+                editor.undo()
             default:
                 try editor.trim(
                     clip.id, edge: .start, toSourceTime: clip.availableSourceStart, minimumClipDuration: 0.01)

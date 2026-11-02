@@ -213,30 +213,6 @@ struct VideoEditorView: View {
                         .buttonStyle(.bordered)
                         .typography(.body)
 
-                        if editor.clips.contains(where: {
-                            !$0.isIncluded
-                        }) {
-                            Menu {
-                                ForEach(
-                                    editor.clips.filter {
-                                        !$0.isIncluded
-                                    }
-                                ) { clip in
-
-                                    Button("\(timeLabel(clip.sourceStart)) – \(timeLabel(clip.sourceEnd))") {
-                                        performEdit {
-                                            try $0.restore(clip.id)
-                                        }
-                                    }
-                                }
-                            } label: {
-                                Label("Restore removed clip", systemImage: "arrow.uturn.backward.circle")
-                                    .typography(.caption)
-                            }
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .disabled(!canEdit)
-                        }
-
                         Button {
                             showExport = true
                         } label: {
