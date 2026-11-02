@@ -2,6 +2,7 @@ import SwiftUI
 import AVKit
 
 struct ProjectView: View {
+    @Environment(\.dismiss) private var dismiss
     @Bindable var store: AppStore
     let id: UUID
     var body: some View {
@@ -13,17 +14,38 @@ struct ProjectView: View {
                         description: Text(
                             "Return to the main screen and import the video again."
                         ))
+                        .toolbar {
+                            fallbackBackButton
+                        }
                 } else {
                     VideoEditorView(store: store, id: id)
                 }
             } else {
                 ContentUnavailableView("Project unavailable", systemImage: "video.slash")
+                    .toolbar {
+                        fallbackBackButton
+                    }
             }
         }
         .background(MatchColor.paper)
         .foregroundStyle(MatchColor.ink)
         .navigationTitle(store.project(id)?.title ?? "Match")
         .navigationBarTitleDisplayMode(.inline)
+        // Hide the system back button here, outside the editor's conditional content, so it stays
+        // hidden even when the editor renders nothing for a frame during the push.
+        .navigationBarBackButtonHidden(true)
+    }
+
+    @ToolbarContentBuilder
+    private var fallbackBackButton: some ToolbarContent {
+        ToolbarItem(placement: .topBarLeading) {
+            Button {
+                dismiss()
+            } label: {
+                Image(systemName: "chevron.left")
+            }
+            .accessibilityLabel("Back")
+        }
     }
 }
 
@@ -274,7 +296,6 @@ struct VideoEditorView: View {
             .sheet(isPresented: $showExport) {
                 ExportView(store: store, projectID: id)
             }
-            .navigationBarBackButtonHidden(true)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button {

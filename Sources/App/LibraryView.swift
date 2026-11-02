@@ -4,6 +4,8 @@ import PhotosUI
 struct LibraryView: View {
     @Bindable var store: AppStore
     @State private var showPhotoPicker = false
+    @State private var isPickerOnScreen = false
+    @State private var pendingProjectID: UUID?
     @State private var path: [UUID] = []
 
     var body: some View {
@@ -34,6 +36,7 @@ struct LibraryView: View {
                     CourtArtwork()
                         .frame(height: 202)
                     Button {
+                        isPickerOnScreen = true
                         showPhotoPicker = true
                     } label: {
                         Label("Import match video", systemImage: "square.and.arrow.down")
@@ -80,11 +83,15 @@ struct LibraryView: View {
             }
         }
         .sheet(isPresented: $showPhotoPicker) {
+            isPickerOnScreen = false
+            pushPendingProject()
+        } content: {
             VideoImportPicker { provider in
                 showPhotoPicker = false
                 Task {
                     if let id = await store.importPhoto(provider) {
-                        path.append(id)
+                        pendingProjectID = id
+                        pushPendingProject()
                     }
                 }
             }
@@ -127,6 +134,17 @@ struct LibraryView: View {
         } message: {
             Text(store.errorMessage ?? "")
         }
+    }
+
+    /// Pushes the imported project only after the picker sheet has finished closing.
+    /// Pushing while the sheet is still animating away can leave the navigation bar
+    /// in a mixed state (system and custom back buttons together).
+    private func pushPendingProject() {
+        guard !isPickerOnScreen, let id = pendingProjectID else {
+            return
+        }
+        pendingProjectID = nil
+        path.append(id)
     }
 }
 

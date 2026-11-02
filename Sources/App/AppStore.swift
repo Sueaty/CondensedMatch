@@ -56,6 +56,9 @@ final class AppStore {
     }
 
     func importPhoto(_ provider: NSItemProvider) async -> UUID? {
+        guard !importing else {
+            return nil
+        }
         importing = true
         importProgress = 0
         defer {
