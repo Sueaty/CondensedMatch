@@ -2,7 +2,10 @@ import RallyKit
 import SwiftUI
 
 enum RallyBarState: Equatable {
-    case idle
+    /// Ready to find rallies, with today's free finds still available.
+    case idle(freeFindsLeft: Int)
+    /// Today's free finds are used up. Go Pro replaces Find rallies.
+    case outOfFreeFinds
     /// Find rallies was tapped before the video check finished.
     case checking
     /// The video check rejected this video. Find rallies stays disabled.
@@ -11,42 +14,55 @@ enum RallyBarState: Equatable {
 }
 
 struct RallyBar: View {
-    static let height: CGFloat = 44
+    static let height: CGFloat = 54
 
     let state: RallyBarState
     var onFind: () -> Void = {}
+    var onGoPro: () -> Void = {}
     var onReview: () -> Void = {}
 
     var body: some View {
         HStack(spacing: 10) {
             icon
+                .frame(width: 18, height: 18)
 
-            Text(title)
-                .typography(.body)
-                .fontWeight(.medium)
-                .lineLimit(1)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .typography(.body)
+                    .fontWeight(.medium)
+                    .lineLimit(1)
+
+                if let subtitle {
+                    RallyBarSubtitleRow(subtitle: subtitle)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
 
             action
         }
-        .padding(.leading, 14)
-        .padding(.trailing, 6)
-        .frame(height: Self.height)
+        .padding(.leading, 16)
+        .padding(.trailing, 11)
+        .frame(minHeight: Self.height)
         .foregroundStyle(foreground)
         .background(isDark ? MatchColor.ink : .white)
         .overlay {
             if !isDark {
                 Capsule()
-                    .strokeBorder(MatchColor.line, lineWidth: state == .rejected ? 1.5 : 1)
+                    .strokeBorder(MatchColor.line, lineWidth: hasBorderBeam ? 1 : 1.5)
             }
         }
         .clipShape(Capsule())
         .overlay {
-            // Idle and checking share this branch so the glow does not restart between them.
+            // Every glowing state shares this branch so the glow does not restart between them.
             if hasBorderBeam {
                 RallyBarBorderBeam()
             }
         }
+        .shadow(
+            color: hasBorderBeam || isDark ? .clear : MatchColor.ink.opacity(0.06),
+            radius: 4,
+            y: 2
+        )
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("rally-bar")
     }
@@ -59,12 +75,17 @@ struct RallyBar: View {
     }
 
     private var hasBorderBeam: Bool {
-        state == .idle || state == .checking
+        switch state {
+        case .idle, .checking:
+            return true
+        case .outOfFreeFinds, .rejected, .done:
+            return false
+        }
     }
 
     private var foreground: Color {
         switch state {
-        case .idle, .checking:
+        case .idle, .outOfFreeFinds, .checking:
             return MatchColor.ink
         case .rejected:
             return MatchColor.muted
@@ -77,10 +98,35 @@ struct RallyBar: View {
         switch state {
         case .idle, .rejected:
             return "Auto-find every rally"
+        case .outOfFreeFinds:
+            return "Free finds refill tomorrow"
         case .checking:
             return "Checking this video…"
         case .done(let rallies, let toCheck):
             return toCheck > 0 ? "\(rallies) rallies · \(toCheck) to check" : "\(rallies) rallies"
+        }
+    }
+
+    private var subtitle: RallyBarSubtitle? {
+        switch state {
+        case .idle(let freeFindsLeft):
+            return RallyBarSubtitle(freeFindsLeft: freeFindsLeft)
+        case .outOfFreeFinds:
+            return RallyBarSubtitle(
+                text: "Or go unlimited with Pro",
+                freeFindsLeft: 0,
+                color: MatchColor.muted,
+                weight: .regular
+            )
+        case .checking:
+            return RallyBarSubtitle(
+                text: "Rally finding starts right after",
+                freeFindsLeft: nil,
+                color: MatchColor.muted,
+                weight: .regular
+            )
+        case .rejected, .done:
+            return nil
         }
     }
 
@@ -89,6 +135,9 @@ struct RallyBar: View {
         switch state {
         case .idle, .rejected:
             Image(systemName: "sparkles")
+                .font(.system(size: 16, weight: .medium))
+        case .outOfFreeFinds:
+            Image(systemName: "moon.stars")
                 .font(.system(size: 16, weight: .medium))
         case .checking:
             ProgressView()
@@ -110,18 +159,25 @@ struct RallyBar: View {
                 action: onFind
             )
             .accessibilityIdentifier("rally-bar-find")
+        case .outOfFreeFinds:
+            RallyBarActionButton(
+                title: "Go Pro",
+                style: .dark,
+                action: onGoPro
+            )
+            .accessibilityIdentifier("rally-bar-go-pro")
         case .checking:
             RallyBarActionButton(
                 title: "Checking",
+                style: .disabled,
                 showsChevron: false,
-                isEnabled: false,
                 action: {}
             )
             .accessibilityIdentifier("rally-bar-checking")
         case .rejected:
             RallyBarActionButton(
                 title: "Find rallies",
-                isEnabled: false,
+                style: .disabled,
                 action: onFind
             )
             .accessibilityIdentifier("rally-bar-find")
@@ -135,10 +191,75 @@ struct RallyBar: View {
     }
 }
 
+/// The bar's second line: today's free finds as dots, then a short note.
+private struct RallyBarSubtitle {
+    let text: String
+    /// Nil hides the dots.
+    let freeFindsLeft: Int?
+    let color: Color
+    let weight: Font.Weight
+
+    init(text: String, freeFindsLeft: Int?, color: Color, weight: Font.Weight) {
+        self.text = text
+        self.freeFindsLeft = freeFindsLeft
+        self.color = color
+        self.weight = weight
+    }
+
+    /// The last free find of the day turns amber.
+    init(freeFindsLeft: Int) {
+        let isLast = freeFindsLeft == 1
+        self.init(
+            text: isLast ? "1 free find left today" : "\(freeFindsLeft) free finds left today",
+            freeFindsLeft: freeFindsLeft,
+            color: isLast ? MatchColor.amberInk : MatchColor.muted,
+            weight: isLast ? .semibold : .regular
+        )
+    }
+}
+
+private struct RallyBarSubtitleRow: View {
+    let subtitle: RallyBarSubtitle
+
+    var body: some View {
+        HStack(spacing: 5) {
+            if let left = subtitle.freeFindsLeft {
+                ForEach(0..<FreeFindAllowance.dailyLimit, id: \.self) { index in
+                    Circle()
+                        .fill(dotColor(index: index, left: left))
+                        .frame(width: 6, height: 6)
+                }
+            }
+
+            Text(subtitle.text)
+                .font(.caption2)
+                .fontWeight(subtitle.weight)
+                .foregroundStyle(subtitle.color)
+                .lineLimit(1)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(subtitle.text)
+        .accessibilityIdentifier("rally-bar-subtitle")
+    }
+
+    private func dotColor(index: Int, left: Int) -> Color {
+        guard index < left else {
+            return MatchColor.ink.opacity(0.15)
+        }
+        return left == 1 ? MatchColor.amber : MatchColor.limeDeep
+    }
+}
+
 private struct RallyBarActionButton: View {
+    enum Style {
+        case primary
+        case dark
+        case disabled
+    }
+
     let title: String
+    var style = Style.primary
     var showsChevron = true
-    var isEnabled = true
     let action: () -> Void
 
     var body: some View {
@@ -153,16 +274,35 @@ private struct RallyBarActionButton: View {
                         .font(.system(size: 11, weight: .bold))
                 }
             }
-            .foregroundStyle(isEnabled ? MatchColor.ink : MatchColor.ink.opacity(0.4))
+            .foregroundStyle(foreground)
             .padding(.horizontal, 12)
             .frame(height: 32)
-            .background(
-                isEnabled ? MatchColor.lime : Color(uiColor: .tertiarySystemFill),
-                in: Capsule()
-            )
+            .background(background, in: Capsule())
         }
         .buttonStyle(.plain)
-        .disabled(!isEnabled)
+        .disabled(style == .disabled)
+    }
+
+    private var foreground: Color {
+        switch style {
+        case .primary:
+            return MatchColor.ink
+        case .dark:
+            return MatchColor.lime
+        case .disabled:
+            return MatchColor.ink.opacity(0.4)
+        }
+    }
+
+    private var background: Color {
+        switch style {
+        case .primary:
+            return MatchColor.lime
+        case .dark:
+            return MatchColor.ink
+        case .disabled:
+            return Color(uiColor: .tertiarySystemFill)
+        }
     }
 }
 
@@ -308,7 +448,11 @@ private struct BorderSlice: Shape {
 
 #Preview {
     VStack(spacing: 12) {
-        RallyBar(state: .idle)
+        RallyBar(state: .idle(freeFindsLeft: 2))
+
+        RallyBar(state: .idle(freeFindsLeft: 1))
+
+        RallyBar(state: .outOfFreeFinds)
 
         RallyBar(state: .checking)
 

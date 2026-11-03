@@ -13,4 +13,7 @@ enum MatchColor {
     static let muted = Color(red: 0.37, green: 0.42, blue: 0.37)
     static let lime = Color(red: 0.81, green: 0.93, blue: 0.37)
     static let line = Color(red: 0.84, green: 0.86, blue: 0.81)
+    static let limeDeep = Color(red: 0.37, green: 0.55, blue: 0.05)
+    static let amber = Color(red: 0.89, green: 0.63, blue: 0.23)
+    static let amberInk = Color(red: 0.60, green: 0.39, blue: 0.07)
 }

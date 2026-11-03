@@ -35,6 +35,7 @@ enum VideoCheckStatus: Sendable {
 final class AppStore {
     private(set) var activeProject: MatchProject?
     private(set) var videoCheck: VideoCheckStatus?
+    private(set) var freeFinds: FreeFindAllowance
     var errorMessage: String?
     var importing = false
     var importProgress = 0.0
@@ -46,9 +47,17 @@ final class AppStore {
     private let assets = SourceAssetStore()
     private var importTransfer: Progress?
     private var videoCheckTask: Task<Void, Never>?
+    private let defaults: UserDefaults
+    private static let freeFindsKey = "freeFindAllowance"
 
-    init(root: URL? = nil) {
+    init(root: URL? = nil, defaults: UserDefaults = .standard) {
         self.root = root ?? URL.cachesDirectory.appendingPathComponent("EditingSession", isDirectory: true)
+        self.defaults = defaults
+        // Free finds outlive the editing session, which is deleted on every launch.
+        freeFinds = defaults.data(forKey: Self.freeFindsKey)
+            .flatMap {
+                try? JSONDecoder().decode(FreeFindAllowance.self, from: $0)
+            } ?? FreeFindAllowance()
         do {
             // A new process starts a fresh session. Backgrounding does not recreate the store.
             if FileManager.default.fileExists(atPath: self.root.path) {
@@ -80,6 +89,23 @@ final class AppStore {
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    var freeFindsLeft: Int {
+        freeFinds.remaining(on: .now)
+    }
+
+    /// Uses one of today's free finds. Returns false when none are left.
+    /// Call this only when rally analysis finishes, so a cancelled or failed analysis keeps the free find.
+    @discardableResult
+    func consumeFreeFind() -> Bool {
+        guard freeFinds.consume(on: .now) else {
+            return false
+        }
+        if let data = try? JSONEncoder().encode(freeFinds) {
+            defaults.set(data, forKey: Self.freeFindsKey)
+        }
+        return true
     }
 
     func folder(_ id: UUID) -> URL {

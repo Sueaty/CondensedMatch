@@ -16,6 +16,13 @@
         @MainActor
         static func install(in store: AppStore) async throws {
             store.videoChecker = videoChecker()
+            let usedFreeFinds = ProcessInfo.processInfo.environment["RALLYCUT_EDITOR_TEST_FREE_FINDS_USED"]
+                .flatMap {
+                    Int($0)
+                } ?? 0
+            for _ in 0..<usedFreeFinds {
+                store.consumeFreeFind()
+            }
             if let path = ProcessInfo.processInfo.environment["RALLYCUT_EDITOR_TEST_SOURCE"] {
                 try await importSource(URL(fileURLWithPath: path), in: store)
                 return

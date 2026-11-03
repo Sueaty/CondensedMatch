@@ -407,6 +407,36 @@ final class EditorInteractionTests: XCTestCase {
         XCTAssertEqual(app.staticTexts["editor-selected-clip"].value as? String, selected)
     }
 
+    func testRallyBarShowsTwoFreeFindsOnTwoLines() {
+        let app = openEditor()
+        // The bar's own frame also covers its border glow, so measure the gap it fills
+        // between the clip row and Export (12 pt spacing on each side).
+        let gap = app.buttons["Export"].frame.minY - app.buttons["editor-split"].frame.maxY
+        XCTAssertEqual(gap - 24, 54, accuracy: 1)
+        XCTAssertEqual(app.otherElements["rally-bar-subtitle"].label, "2 free finds left today")
+        XCTAssertTrue(app.buttons["rally-bar-find"].isEnabled)
+    }
+
+    func testRallyBarShowsLastFreeFind() {
+        let app = openEditor(environment: ["RALLYCUT_EDITOR_TEST_FREE_FINDS_USED": "1"])
+        XCTAssertEqual(app.otherElements["rally-bar-subtitle"].label, "1 free find left today")
+        XCTAssertTrue(app.buttons["rally-bar-find"].isEnabled)
+        attachScreenshot(app, named: "The last free find of the day is shown in amber")
+    }
+
+    func testNoFreeFindsReplacesFindRalliesWithGoPro() {
+        let app = openEditor(environment: ["RALLYCUT_EDITOR_TEST_FREE_FINDS_USED": "2"])
+        XCTAssertTrue(app.staticTexts["Free finds refill tomorrow"].exists)
+        XCTAssertEqual(app.otherElements["rally-bar-subtitle"].label, "Or go unlimited with Pro")
+        XCTAssertFalse(app.buttons["rally-bar-find"].exists)
+        attachScreenshot(app, named: "With no free finds left, Go Pro replaces Find rallies")
+
+        app.buttons["rally-bar-go-pro"].tap()
+        let toast = app.otherElements["editor-toast"]
+        XCTAssertTrue(toast.waitForExistence(timeout: 3))
+        XCTAssertTrue(toast.label.contains("Pro"))
+    }
+
     func testFindRalliesWaitsInBarWhileVideoCheckRuns() {
         let app = openEditor(environment: ["RALLYCUT_EDITOR_TEST_VIDEO_CHECK_DELAY": "4"])
         app.buttons["rally-bar-find"].tap()
@@ -414,6 +444,7 @@ final class EditorInteractionTests: XCTestCase {
         XCTAssertTrue(checking.waitForExistence(timeout: 2))
         XCTAssertFalse(checking.isEnabled)
         XCTAssertTrue(app.staticTexts["Checking this video…"].exists)
+        XCTAssertEqual(app.otherElements["rally-bar-subtitle"].label, "Rally finding starts right after")
         XCTAssertTrue(app.buttons["Export"].isEnabled)
         attachScreenshot(app, named: "Find rallies waits in the bar while the video check runs")
 

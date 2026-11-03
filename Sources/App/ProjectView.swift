@@ -241,6 +241,9 @@ struct VideoEditorView: View {
                             state: rallyBarState,
                             onFind: {
                                 findRallies()
+                            },
+                            onGoPro: {
+                                showToast("RallyCut Pro is coming soon.")
                             }
                         )
 
@@ -365,7 +368,8 @@ struct VideoEditorView: View {
         if isWaitingForVideoCheck {
             return .checking
         }
-        return .idle
+        let freeFindsLeft = store.freeFindsLeft
+        return freeFindsLeft > 0 ? .idle(freeFindsLeft: freeFindsLeft) : .outOfFreeFinds
     }
 
     /// Waits in the bar while the import-time check runs, rejects the video with an alert,

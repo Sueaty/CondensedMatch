@@ -8,7 +8,8 @@ struct RallyCutApp: App {
         #if DEBUG
             if let session = ProcessInfo.processInfo.environment["RALLYCUT_EDITOR_TEST_SESSION"] {
                 let root = URL.temporaryDirectory.appendingPathComponent("EditorUITests-\(session)")
-                _store = State(initialValue: AppStore(root: root))
+                let defaults = UserDefaults(suiteName: "EditorUITests-\(session)") ?? .standard
+                _store = State(initialValue: AppStore(root: root, defaults: defaults))
             }
         #endif
     }
