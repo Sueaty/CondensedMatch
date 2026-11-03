@@ -2,7 +2,6 @@ import SwiftUI
 
 enum RallyBarState: Equatable {
     case idle
-    case scanning(progress: Double)
     case done(rallies: Int, toCheck: Int)
 }
 
@@ -11,7 +10,6 @@ struct RallyBar: View {
 
     let state: RallyBarState
     var onFind: () -> Void = {}
-    var onCancel: () -> Void = {}
     var onReview: () -> Void = {}
 
     var body: some View {
@@ -30,9 +28,7 @@ struct RallyBar: View {
         .padding(.trailing, 6)
         .frame(height: Self.height)
         .foregroundStyle(isDark ? .white : MatchColor.ink)
-        .background {
-            background
-        }
+        .background(isDark ? MatchColor.ink : .white)
         .overlay {
             if state == .idle {
                 Capsule()
@@ -57,8 +53,6 @@ struct RallyBar: View {
         switch state {
         case .idle:
             return "Auto-find every rally"
-        case .scanning(let progress):
-            return "Finding rallies… \(Int((progress * 100).rounded()))%"
         case .done(let rallies, let toCheck):
             return toCheck > 0 ? "\(rallies) rallies · \(toCheck) to check" : "\(rallies) rallies"
         }
@@ -70,33 +64,10 @@ struct RallyBar: View {
         case .idle:
             Image(systemName: "sparkles")
                 .font(.system(size: 16, weight: .medium))
-        case .scanning:
-            ProgressView()
-                .controlSize(.small)
-                .tint(MatchColor.lime)
         case .done:
             Image(systemName: "tennisball.fill")
                 .font(.system(size: 16, weight: .medium))
                 .foregroundStyle(MatchColor.lime)
-        }
-    }
-
-    @ViewBuilder
-    private var background: some View {
-        switch state {
-        case .idle:
-            Color.white
-        case .scanning(let progress):
-            GeometryReader { proxy in
-                MatchColor.ink
-                    .overlay(alignment: .leading) {
-                        MatchColor.lime
-                            .opacity(0.2)
-                            .frame(width: proxy.size.width * min(1, max(0, progress)))
-                    }
-            }
-        case .done:
-            MatchColor.ink
         }
     }
 
@@ -106,27 +77,12 @@ struct RallyBar: View {
         case .idle:
             RallyBarActionButton(
                 title: "Find rallies",
-                showsChevron: true,
-                fill: MatchColor.lime,
-                foreground: MatchColor.ink,
                 action: onFind
             )
             .accessibilityIdentifier("rally-bar-find")
-        case .scanning:
-            RallyBarActionButton(
-                title: "Cancel",
-                showsChevron: false,
-                fill: .white.opacity(0.12),
-                foreground: .white,
-                action: onCancel
-            )
-            .accessibilityIdentifier("rally-bar-cancel")
         case .done:
             RallyBarActionButton(
                 title: "Review",
-                showsChevron: true,
-                fill: MatchColor.lime,
-                foreground: MatchColor.ink,
                 action: onReview
             )
             .accessibilityIdentifier("rally-bar-review")
@@ -136,9 +92,6 @@ struct RallyBar: View {
 
 private struct RallyBarActionButton: View {
     let title: String
-    let showsChevron: Bool
-    let fill: Color
-    let foreground: Color
     let action: () -> Void
 
     var body: some View {
@@ -148,15 +101,13 @@ private struct RallyBarActionButton: View {
                     .typography(.body)
                     .fontWeight(.semibold)
 
-                if showsChevron {
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 11, weight: .bold))
-                }
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 11, weight: .bold))
             }
-            .foregroundStyle(foreground)
+            .foregroundStyle(MatchColor.ink)
             .padding(.horizontal, 12)
             .frame(height: 32)
-            .background(fill, in: Capsule())
+            .background(MatchColor.lime, in: Capsule())
         }
         .buttonStyle(.plain)
     }
@@ -283,8 +234,6 @@ private struct BorderSlice: Shape {
 #Preview {
     VStack(spacing: 12) {
         RallyBar(state: .idle)
-
-        RallyBar(state: .scanning(progress: 0.38))
 
         RallyBar(state: .done(rallies: 18, toCheck: 3))
     }

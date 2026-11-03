@@ -75,7 +75,7 @@ struct VideoEditorView: View {
                     sourceHeight: project.source.height,
                     maxWidth: max(0, geometry.size.width - 32),
                     maxHeight: max(
-                        0, min(geometry.size.height * 0.42, geometry.size.height - controlsHeight - RallyBar.height - 48))
+                        0, min(geometry.size.height * 0.42, geometry.size.height - controlsHeight - 36))
                 )
                 VStack(spacing: 12) {
                     EditorVideoSurface(player: playback.player)
@@ -92,40 +92,63 @@ struct VideoEditorView: View {
                         .accessibilityIdentifier("editor-preview")
                         .frame(maxWidth: .infinity)
 
-                    RallyBar(state: .idle) {
-                        showToast("Rally detection is coming soon.")
-                    }
-
                     VStack(spacing: 12) {
-                        HStack(spacing: 18) {
+                        HStack(spacing: 0) {
+                            HStack(spacing: 4) {
+                                Text(timeLabel(playback.position))
+                                    .fontWeight(.semibold)
+                                    .accessibilityIdentifier("editor-playback-time")
+                                    .accessibilityValue(String(format: "%.4f", playback.position))
+
+                                Text("/ \(timeLabel(editor.totalDuration))")
+                                    .foregroundStyle(MatchColor.muted)
+                                    .accessibilityIdentifier("editor-total-duration")
+                                    .accessibilityValue(String(format: "%.4f", editor.totalDuration))
+                            }
+                            .typography(.body)
+                            .monospacedDigit()
+                            .lineLimit(1)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
                             Button {
                                 playback.togglePlayback()
                             } label: {
                                 Image(systemName: playback.isPlaying ? "pause.fill" : "play.fill")
-                                    .typography(.brand)
+                                    .font(.system(size: 20, weight: .bold))
                                     .frame(width: 44, height: 44)
+                                    .background(MatchColor.ink.opacity(0.12), in: Circle())
                             }
                             .disabled(!canEdit)
                             .accessibilityLabel(playback.isPlaying ? "Pause" : "Play")
-                            Spacer()
-                            Button {
-                                performEdit {
-                                    $0.undo()
+
+                            HStack(spacing: 0) {
+                                Button {
+                                    performEdit {
+                                        $0.undo()
+                                    }
+                                } label: {
+                                    Image(systemName: "arrow.uturn.backward")
+                                        .opacity(editor.canUndo ? 1 : 0.3)
+                                        .frame(width: 44, height: 44)
+                                        .contentShape(Rectangle())
                                 }
-                            } label: {
-                                Image(systemName: "arrow.uturn.backward")
-                            }
-                            .disabled(!canEdit || !editor.canUndo)
-                            .accessibilityLabel("Undo")
-                            Button {
-                                performEdit {
-                                    $0.redo()
+                                .disabled(!canEdit || !editor.canUndo)
+                                .accessibilityLabel("Undo")
+
+                                Button {
+                                    performEdit {
+                                        $0.redo()
+                                    }
+                                } label: {
+                                    Image(systemName: "arrow.uturn.forward")
+                                        .opacity(editor.canRedo ? 1 : 0.3)
+                                        .frame(width: 44, height: 44)
+                                        .contentShape(Rectangle())
                                 }
-                            } label: {
-                                Image(systemName: "arrow.uturn.forward")
+                                .disabled(!canEdit || !editor.canRedo)
+                                .accessibilityLabel("Redo")
                             }
-                            .disabled(!canEdit || !editor.canRedo)
-                            .accessibilityLabel("Redo")
+                            .frame(maxWidth: .infinity, alignment: .trailing)
                         }
 
                         EditorTimeline(
@@ -167,51 +190,52 @@ struct VideoEditorView: View {
                             }
                         )
 
-                        if let selected = editor.clips.first(where: {
-                            $0.id == editor.selectedClipID
-                        }) {
-                            HStack(spacing: 8) {
+                        HStack(spacing: 8) {
+                            if let selected = editor.clips.first(where: {
+                                $0.id == editor.selectedClipID
+                            }) {
                                 Text(
                                     "Clip \(editor.includedClips.firstIndex(where: { $0.id == selected.id }).map { $0 + 1 } ?? 0)"
                                 )
                                 .typography(.body)
                                 .bold()
+                                .lineLimit(1)
                                 .accessibilityIdentifier("editor-selected-clip")
                                 .accessibilityValue(String(editor.includedClips.count))
-                                Spacer(minLength: 8)
-                                Text(timeLabel(selected.duration))
-                                    .typography(.body)
-                                    .monospacedDigit()
-                                    .accessibilityIdentifier("editor-selected-clip-duration")
-                                    .accessibilityValue(String(format: "%.4f", selected.duration))
                             }
+
+                            Spacer(minLength: 8)
+
+                            HStack(spacing: 12) {
+                                Button {
+                                    split(project: project)
+                                } label: {
+                                    Label(
+                                        splitLookup.isFindingFrame ? "Finding frame…" : "Split",
+                                        systemImage: "scissors")
+                                }
+                                .disabled(!canEdit)
+                                .accessibilityIdentifier("editor-split")
+
+                                Button {
+                                    performEdit {
+                                        try $0.excludeSelected()
+                                    }
+                                } label: {
+                                    Label("Delete", systemImage: "trash")
+                                }
+                                .disabled(
+                                    !canEdit || editor.includedClips.count <= 1 || editor.selectedClipID == nil
+                                )
+                                .accessibilityIdentifier("editor-delete")
+                            }
+                            .buttonStyle(.bordered)
+                            .typography(.body)
                         }
 
-                        HStack(spacing: 12) {
-                            Spacer()
-                            Button {
-                                split(project: project)
-                            } label: {
-                                Label(
-                                    splitLookup.isFindingFrame ? "Finding frame…" : "Split",
-                                    systemImage: "scissors")
-                            }
-                            .disabled(!canEdit)
-                            .accessibilityIdentifier("editor-split")
-                            Button {
-                                performEdit {
-                                    try $0.excludeSelected()
-                                }
-                            } label: {
-                                Label("Delete", systemImage: "trash")
-                            }
-                            .disabled(
-                                !canEdit || editor.includedClips.count <= 1 || editor.selectedClipID == nil
-                            )
-                            .accessibilityIdentifier("editor-delete")
+                        RallyBar(state: .idle) {
+                            showToast("Rally detection is coming soon.")
                         }
-                        .buttonStyle(.bordered)
-                        .typography(.body)
 
                         Button {
                             showExport = true

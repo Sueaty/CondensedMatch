@@ -13,33 +13,17 @@ struct EditorTimeline: View {
     let onSelect: (UUID) -> Void
 
     var body: some View {
-        VStack(spacing: 8) {
-            HStack {
-                Text(timeLabel(position))
-                    .typography(.body)
-                    .monospacedDigit()
-                    .accessibilityIdentifier("editor-playback-time")
-                    .accessibilityValue(String(format: "%.4f", position))
-                Spacer()
-                Text(timeLabel(editor.totalDuration))
-                    .typography(.caption)
-                    .monospacedDigit()
-                    .foregroundStyle(.secondary)
-                    .accessibilityIdentifier("editor-total-duration")
-                    .accessibilityValue(String(format: "%.4f", editor.totalDuration))
+        TimelineScrollSurface(configuration: self)
+            .frame(height: 124)
+            .background(MatchColor.ink.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
+            .overlay {
+                Rectangle()
+                    .fill(MatchColor.lime)
+                    .frame(width: 2, height: 124)
+                    .allowsHitTesting(false)
             }
-            TimelineScrollSurface(configuration: self)
-                .frame(height: 124)
-                .background(MatchColor.ink.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
-                .overlay {
-                    Rectangle()
-                        .fill(MatchColor.lime)
-                        .frame(width: 2, height: 124)
-                        .allowsHitTesting(false)
-                }
-        }
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("editor-timeline")
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("editor-timeline")
     }
 }
 
