@@ -1,5 +1,6 @@
 import SwiftUI
 import AVKit
+import RallyKit
 
 struct ProjectView: View {
     @Environment(\.dismiss) private var dismiss
@@ -65,6 +66,9 @@ struct VideoEditorView: View {
     @State private var editTask: Task<Void, Never>?
     @State private var frameResolver = VideoFrameBoundaryResolver()
     @State private var controlsHeight = 500.0
+    @State private var isWaitingForVideoCheck = false
+    @State private var rallyRejection: RallyRejection?
+    @State private var isRallyFindingRejected = false
 
     var body: some View {
         if let project = store.project(id), let editor = project.editorState {
@@ -233,9 +237,12 @@ struct VideoEditorView: View {
                             .typography(.body)
                         }
 
-                        RallyBar(state: .idle) {
-                            showToast("Rally detection is coming soon.")
-                        }
+                        RallyBar(
+                            state: rallyBarState,
+                            onFind: {
+                                findRallies()
+                            }
+                        )
 
                         Button {
                             showExport = true
@@ -288,6 +295,12 @@ struct VideoEditorView: View {
                     splitLookup.cancel()
                 }
             }
+            .onChange(of: store.videoCheck?.isChecking ?? false) { _, isChecking in
+                if !isChecking && isWaitingForVideoCheck {
+                    isWaitingForVideoCheck = false
+                    findRallies()
+                }
+            }
             .onChange(of: showExport) { _, shown in
                 if shown {
                     playback.pause()
@@ -322,6 +335,53 @@ struct VideoEditorView: View {
             } message: {
                 Text("Your splits and deletions will be lost. Videos already saved to Photos stay there.")
             }
+            .alert(
+                rallyRejection?.alertTitle ?? "",
+                isPresented: Binding(
+                    get: {
+                        rallyRejection != nil
+                    },
+                    set: { isPresented in
+                        if !isPresented {
+                            rallyRejection = nil
+                        }
+                    }
+                ),
+                presenting: rallyRejection
+            ) { _ in
+                Button("OK") {
+                    isRallyFindingRejected = true
+                }
+            } message: { rejection in
+                Text(rejection.alertMessage)
+            }
+        }
+    }
+
+    private var rallyBarState: RallyBarState {
+        if isRallyFindingRejected {
+            return .rejected
+        }
+        if isWaitingForVideoCheck {
+            return .checking
+        }
+        return .idle
+    }
+
+    /// Waits in the bar while the import-time check runs, rejects the video with an alert,
+    /// or continues to rally finding once the check passes.
+    private func findRallies() {
+        guard !isRallyFindingRejected, !isWaitingForVideoCheck else {
+            return
+        }
+        switch store.videoCheck {
+        case .checking:
+            isWaitingForVideoCheck = true
+        case .rejected(let rejection):
+            playback.pause()
+            rallyRejection = rejection
+        case .passed, nil:
+            showToast("Rally detection is coming soon.")
         }
     }
 

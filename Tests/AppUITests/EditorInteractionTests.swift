@@ -407,6 +407,56 @@ final class EditorInteractionTests: XCTestCase {
         XCTAssertEqual(app.staticTexts["editor-selected-clip"].value as? String, selected)
     }
 
+    func testFindRalliesWaitsInBarWhileVideoCheckRuns() {
+        let app = openEditor(environment: ["RALLYCUT_EDITOR_TEST_VIDEO_CHECK_DELAY": "4"])
+        app.buttons["rally-bar-find"].tap()
+        let checking = app.buttons["rally-bar-checking"]
+        XCTAssertTrue(checking.waitForExistence(timeout: 2))
+        XCTAssertFalse(checking.isEnabled)
+        XCTAssertTrue(app.staticTexts["Checking this video…"].exists)
+        XCTAssertTrue(app.buttons["Export"].isEnabled)
+        attachScreenshot(app, named: "Find rallies waits in the bar while the video check runs")
+
+        let toast = app.otherElements["editor-toast"]
+        XCTAssertTrue(toast.waitForExistence(timeout: 8))
+        XCTAssertTrue(toast.label.contains("coming soon"))
+        XCTAssertFalse(checking.exists)
+        XCTAssertTrue(app.buttons["rally-bar-find"].isEnabled)
+    }
+
+    func testRejectionAfterWaitingShowsAlertAndDisablesFindRallies() {
+        let app = openEditor(environment: [
+            "RALLYCUT_EDITOR_TEST_VIDEO_CHECK": "cameraTooClose",
+            "RALLYCUT_EDITOR_TEST_VIDEO_CHECK_DELAY": "4",
+        ])
+        app.buttons["rally-bar-find"].tap()
+        XCTAssertTrue(app.buttons["rally-bar-checking"].waitForExistence(timeout: 2))
+
+        let alert = app.alerts["The camera is too close"]
+        XCTAssertTrue(alert.waitForExistence(timeout: 8))
+        XCTAssertTrue(alert.staticTexts.containing(NSPredicate(format: "label CONTAINS 'No free find was used'")).count > 0)
+        alert.buttons["OK"].tap()
+
+        let find = app.buttons["rally-bar-find"]
+        XCTAssertTrue(find.waitForExistence(timeout: 2))
+        XCTAssertFalse(find.isEnabled)
+        XCTAssertTrue(app.buttons["editor-split"].isEnabled)
+        attachScreenshot(app, named: "A rejected video keeps Find rallies disabled")
+    }
+
+    func testFinishedRejectionShowsFrameRateAlertImmediately() {
+        let app = openEditor(environment: ["RALLYCUT_EDITOR_TEST_VIDEO_CHECK": "lowFrameRate"])
+        app.buttons["rally-bar-find"].tap()
+        XCTAssertFalse(app.buttons["rally-bar-checking"].exists)
+
+        let alert = app.alerts["This video is 24 fps"]
+        XCTAssertTrue(alert.waitForExistence(timeout: 2))
+        attachScreenshot(app, named: "A rejected video explains why rally finding is unavailable")
+        alert.buttons["OK"].tap()
+        XCTAssertFalse(app.buttons["rally-bar-find"].isEnabled)
+        XCTAssertFalse(app.alerts.firstMatch.exists)
+    }
+
     func testReturningHomeDiscardsSessionAndRelaunchStartsEmpty() {
         let app = openEditor()
         app.navigationBars.buttons.element(boundBy: 0).tap()
@@ -436,6 +486,13 @@ final class EditorInteractionTests: XCTestCase {
         XCTAssertTrue(export.isHittable)
         XCTAssertLessThanOrEqual(export.frame.maxY, app.windows.firstMatch.frame.maxY - 15)
         return app
+    }
+
+    private func attachScreenshot(_ app: XCUIApplication, named name: String) {
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = name
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
     }
 
     private func waitUntilReady(_ app: XCUIApplication) {

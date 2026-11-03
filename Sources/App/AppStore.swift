@@ -1,17 +1,51 @@
 import Foundation
+import RallyKit
 import SwiftUI
 import UniformTypeIdentifiers
+
+/// The result of the rally-finding video check that starts right after import.
+enum VideoCheckStatus: Sendable {
+    case checking
+    /// `check` is nil when the check itself failed; rally finding then checks the video again.
+    case passed(RallyVideoCheck?)
+    case rejected(RallyRejection)
+
+    var isChecking: Bool {
+        if case .checking = self {
+            return true
+        }
+        return false
+    }
+
+    static func run(on url: URL) async -> VideoCheckStatus {
+        do {
+            let check = try await RallyFinder.check(url: url)
+            if let rejection = check.rejection {
+                return .rejected(rejection)
+            }
+            return .passed(check)
+        } catch {
+            return .passed(nil)
+        }
+    }
+}
 
 @MainActor
 @Observable
 final class AppStore {
     private(set) var activeProject: MatchProject?
+    private(set) var videoCheck: VideoCheckStatus?
     var errorMessage: String?
     var importing = false
     var importProgress = 0.0
     let root: URL
+    /// Replaced by UI tests so they do not run the real check.
+    var videoChecker: @Sendable (URL) async -> VideoCheckStatus = { url in
+        await VideoCheckStatus.run(on: url)
+    }
     private let assets = SourceAssetStore()
     private var importTransfer: Progress?
+    private var videoCheckTask: Task<Void, Never>?
 
     init(root: URL? = nil) {
         self.root = root ?? URL.cachesDirectory.appendingPathComponent("EditingSession", isDirectory: true)
@@ -38,6 +72,7 @@ final class AppStore {
 
     func endSession() {
         activeProject = nil
+        cancelVideoCheck()
         do {
             if FileManager.default.fileExists(atPath: root.path) {
                 try FileManager.default.removeItem(at: root)
@@ -112,11 +147,40 @@ final class AppStore {
         do {
             let project = try await assets.importVideo(at: url, root: root)
             activeProject = project
+            startVideoCheck(for: project)
             return project.id
         } catch {
             errorMessage = error.localizedDescription
             return nil
         }
+    }
+
+    /// Checks the video in the background so tapping Find rallies can reject it or start right away.
+    private func startVideoCheck(for project: MatchProject) {
+        cancelVideoCheck()
+        videoCheck = .checking
+        let source = sourceURL(project)
+        let checker = videoChecker
+        let work = Task.detached(priority: .utility) {
+            await checker(source)
+        }
+        videoCheckTask = Task { [weak self] in
+            let status = await withTaskCancellationHandler {
+                await work.value
+            } onCancel: {
+                work.cancel()
+            }
+            guard !Task.isCancelled, let self, self.activeProject?.id == project.id else {
+                return
+            }
+            self.videoCheck = status
+        }
+    }
+
+    private func cancelVideoCheck() {
+        videoCheckTask?.cancel()
+        videoCheckTask = nil
+        videoCheck = nil
     }
 
     @discardableResult

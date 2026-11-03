@@ -1,7 +1,12 @@
+import RallyKit
 import SwiftUI
 
 enum RallyBarState: Equatable {
     case idle
+    /// Find rallies was tapped before the video check finished.
+    case checking
+    /// The video check rejected this video. Find rallies stays disabled.
+    case rejected
     case done(rallies: Int, toCheck: Int)
 }
 
@@ -27,17 +32,18 @@ struct RallyBar: View {
         .padding(.leading, 14)
         .padding(.trailing, 6)
         .frame(height: Self.height)
-        .foregroundStyle(isDark ? .white : MatchColor.ink)
+        .foregroundStyle(foreground)
         .background(isDark ? MatchColor.ink : .white)
         .overlay {
-            if state == .idle {
+            if !isDark {
                 Capsule()
-                    .strokeBorder(MatchColor.line, lineWidth: 1)
+                    .strokeBorder(MatchColor.line, lineWidth: state == .rejected ? 1.5 : 1)
             }
         }
         .clipShape(Capsule())
         .overlay {
-            if state == .idle {
+            // Idle and checking share this branch so the glow does not restart between them.
+            if hasBorderBeam {
                 RallyBarBorderBeam()
             }
         }
@@ -46,13 +52,33 @@ struct RallyBar: View {
     }
 
     private var isDark: Bool {
-        state != .idle
+        if case .done = state {
+            return true
+        }
+        return false
+    }
+
+    private var hasBorderBeam: Bool {
+        state == .idle || state == .checking
+    }
+
+    private var foreground: Color {
+        switch state {
+        case .idle, .checking:
+            return MatchColor.ink
+        case .rejected:
+            return MatchColor.muted
+        case .done:
+            return .white
+        }
     }
 
     private var title: String {
         switch state {
-        case .idle:
+        case .idle, .rejected:
             return "Auto-find every rally"
+        case .checking:
+            return "Checking this video…"
         case .done(let rallies, let toCheck):
             return toCheck > 0 ? "\(rallies) rallies · \(toCheck) to check" : "\(rallies) rallies"
         }
@@ -61,9 +87,13 @@ struct RallyBar: View {
     @ViewBuilder
     private var icon: some View {
         switch state {
-        case .idle:
+        case .idle, .rejected:
             Image(systemName: "sparkles")
                 .font(.system(size: 16, weight: .medium))
+        case .checking:
+            ProgressView()
+                .controlSize(.small)
+                .tint(MatchColor.ink)
         case .done:
             Image(systemName: "tennisball.fill")
                 .font(.system(size: 16, weight: .medium))
@@ -80,6 +110,21 @@ struct RallyBar: View {
                 action: onFind
             )
             .accessibilityIdentifier("rally-bar-find")
+        case .checking:
+            RallyBarActionButton(
+                title: "Checking",
+                showsChevron: false,
+                isEnabled: false,
+                action: {}
+            )
+            .accessibilityIdentifier("rally-bar-checking")
+        case .rejected:
+            RallyBarActionButton(
+                title: "Find rallies",
+                isEnabled: false,
+                action: onFind
+            )
+            .accessibilityIdentifier("rally-bar-find")
         case .done:
             RallyBarActionButton(
                 title: "Review",
@@ -92,6 +137,8 @@ struct RallyBar: View {
 
 private struct RallyBarActionButton: View {
     let title: String
+    var showsChevron = true
+    var isEnabled = true
     let action: () -> Void
 
     var body: some View {
@@ -101,15 +148,43 @@ private struct RallyBarActionButton: View {
                     .typography(.body)
                     .fontWeight(.semibold)
 
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 11, weight: .bold))
+                if showsChevron {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 11, weight: .bold))
+                }
             }
-            .foregroundStyle(MatchColor.ink)
+            .foregroundStyle(isEnabled ? MatchColor.ink : MatchColor.ink.opacity(0.4))
             .padding(.horizontal, 12)
             .frame(height: 32)
-            .background(MatchColor.lime, in: Capsule())
+            .background(
+                isEnabled ? MatchColor.lime : Color(uiColor: .tertiarySystemFill),
+                in: Capsule()
+            )
         }
         .buttonStyle(.plain)
+        .disabled(!isEnabled)
+    }
+}
+
+extension RallyRejection {
+    var alertTitle: String {
+        switch self {
+        case .lowFrameRate(let frameRate):
+            return "This video is \(Int(frameRate.rounded())) fps"
+        case .cameraTooClose:
+            return "The camera is too close"
+        }
+    }
+
+    var alertMessage: String {
+        let reason: String
+        switch self {
+        case .lowFrameRate:
+            reason = "Rally finding works on videos filmed at 30 fps or more."
+        case .cameraTooClose:
+            reason = "To find rallies, the whole court needs to be in view. Next time, film from 2–3 m behind the baseline, up high."
+        }
+        return reason + "\n\nYou can still edit this video by hand. No free find was used."
     }
 }
 
@@ -234,6 +309,10 @@ private struct BorderSlice: Shape {
 #Preview {
     VStack(spacing: 12) {
         RallyBar(state: .idle)
+
+        RallyBar(state: .checking)
+
+        RallyBar(state: .rejected)
 
         RallyBar(state: .done(rallies: 18, toCheck: 3))
     }

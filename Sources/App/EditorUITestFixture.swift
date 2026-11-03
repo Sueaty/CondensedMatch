@@ -1,5 +1,6 @@
 #if DEBUG
     import AVFoundation
+    import RallyKit
 
     /// Only invoked by the UI test launch environment, with an isolated temporary project root.
     enum EditorUITestFixture {
@@ -14,6 +15,7 @@
 
         @MainActor
         static func install(in store: AppStore) async throws {
+            store.videoChecker = videoChecker()
             if let path = ProcessInfo.processInfo.environment["RALLYCUT_EDITOR_TEST_SOURCE"] {
                 try await importSource(URL(fileURLWithPath: path), in: store)
                 return
@@ -77,6 +79,26 @@
                 throw writer.error ?? MatchError.invalidMedia("Test fixture import failed")
             }
             try await importSource(source, in: store)
+        }
+
+        /// `RALLYCUT_EDITOR_TEST_VIDEO_CHECK`: `lowFrameRate` or `cameraTooClose` rejects the video.
+        /// `RALLYCUT_EDITOR_TEST_VIDEO_CHECK_DELAY`: seconds before the result arrives.
+        private static func videoChecker() -> @Sendable (URL) async -> VideoCheckStatus {
+            let environment = ProcessInfo.processInfo.environment
+            let delay = environment["RALLYCUT_EDITOR_TEST_VIDEO_CHECK_DELAY"].flatMap(Double.init) ?? 0
+            let status: VideoCheckStatus
+            switch environment["RALLYCUT_EDITOR_TEST_VIDEO_CHECK"] {
+            case "lowFrameRate":
+                status = .rejected(.lowFrameRate(24))
+            case "cameraTooClose":
+                status = .rejected(.cameraTooClose(nearPlayerHeight: 0.4))
+            default:
+                status = .passed(nil)
+            }
+            return { _ in
+                try? await Task.sleep(for: .seconds(delay))
+                return status
+            }
         }
 
         @MainActor
