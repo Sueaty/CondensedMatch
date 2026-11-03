@@ -1,0 +1,15 @@
+{
+  "originHash" : "2a7b672933b4f11c4d51f9c2a4f33946221ddb2b6cdfea9b2713d94b41b29f65",
+  "pins" : [
+    {
+      "identity" : "testml",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/Sueaty/TestML.git",
+      "state" : {
+        "revision" : "6dcde13ba9129ce98756204e5a7bbb9c91d7c2ff",
+        "version" : "0.1.0"
+      }
+    }
+  ],
+  "version" : 3
+}

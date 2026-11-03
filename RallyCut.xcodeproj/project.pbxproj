@@ -6,6 +6,10 @@
 	objectVersion = 71;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		A00000000000000000000060 /* RallyKit in Frameworks */ = {isa = PBXBuildFile; productRef = A00000000000000000000062 /* RallyKit */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		A00000000000000000000030 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -33,6 +37,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A00000000000000000000060 /* RallyKit in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -92,6 +97,9 @@
 				A00000000000000000000006 /* Sources */,
 			);
 			name = RallyCut;
+			packageProductDependencies = (
+				A00000000000000000000062 /* RallyKit */,
+			);
 			productName = RallyCut;
 			productReference = A00000000000000000000008 /* RallyCut.app */;
 			productType = "com.apple.product-type.application";
@@ -170,6 +178,9 @@
 				Base,
 			);
 			mainGroup = A00000000000000000000004;
+			packageReferences = (
+				A00000000000000000000061 /* XCRemoteSwiftPackageReference "TestML" */,
+			);
 			productRefGroup = A00000000000000000000005 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
@@ -399,6 +410,25 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		A00000000000000000000061 /* XCRemoteSwiftPackageReference "TestML" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/Sueaty/TestML.git";
+			requirement = {
+				kind = upToNextMinorVersion;
+				minimumVersion = 0.1.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		A00000000000000000000062 /* RallyKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A00000000000000000000061 /* XCRemoteSwiftPackageReference "TestML" */;
+			productName = RallyKit;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = A00000000000000000000001 /* Project object */;
 }
