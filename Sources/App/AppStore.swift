@@ -32,7 +32,7 @@ enum VideoCheckStatus: Sendable {
 
 /// The app's view of a finished rally search.
 enum RallyFindingStatus: Sendable {
-    case found([FoundRally])
+    case found([FoundRally], notes: [RallyFramingNote])
     case rejected(RallyRejection)
 }
 
@@ -46,8 +46,10 @@ final class AppStore {
     private(set) var activeProject: MatchProject?
     private(set) var videoCheck: VideoCheckStatus?
     private(set) var freeFinds: FreeFindAllowance
-    /// Rallies from the last finished search in this session, kept for reviewing them later.
-    var foundRallies: [FoundRally]?
+    /// The rally list after a finished search. While it exists, the editor shows it instead of the timeline.
+    private(set) var rallyReview: RallyReview?
+    /// Framing notes from the search, shown as a banner until dismissed.
+    var rallyNotes: [RallyFramingNote] = []
     var errorMessage: String?
     var importing = false
     var importProgress = 0.0
@@ -62,7 +64,7 @@ final class AppStore {
         case .rejected(let rejection):
             return .rejected(rejection)
         case .found(let result):
-            return .found(result.rallies)
+            return .found(result.rallies, notes: result.notes)
         }
     }
     private let assets = SourceAssetStore()
@@ -229,7 +231,69 @@ final class AppStore {
         videoCheckTask?.cancel()
         videoCheckTask = nil
         videoCheck = nil
-        foundRallies = nil
+        rallyReview = nil
+        rallyNotes = []
+    }
+
+    /// Saves the rally list and rebuilds the edit from its checked rallies as one editor change.
+    /// The list keeps its own undo history; the editor's history is not used while reviewing.
+    @discardableResult
+    func updateRallyReview(
+        _ id: UUID, focusing rallyID: ReviewRally.ID? = nil, _ change: (inout RallyReview) -> Void
+    ) async -> Bool {
+        guard var review = rallyReview, var project = project(id), var editor = project.editorState else {
+            return false
+        }
+        change(&review)
+        do {
+            if review.checkedCount > 0 {
+                try editor.replace(with: review.segments)
+                if let rallyID, let rally = review.rally(rallyID), rally.isChecked {
+                    try Self.movePlayhead(of: &editor, to: rally.start)
+                }
+            }
+        } catch {
+            errorMessage = error.localizedDescription
+            return false
+        }
+        project.editorState = editor
+        project.exportFilename = nil
+        guard await updateProject(project) else {
+            return false
+        }
+        rallyReview = review
+        return true
+    }
+
+    /// Puts the playhead where `sourceTime` plays in the edit, when it is part of the edit.
+    private static func movePlayhead(of editor: inout EditorState, to sourceTime: Double) throws {
+        if let time = editTime(of: sourceTime, in: editor) {
+            try editor.setPlayhead(time)
+        }
+    }
+
+    /// Where `sourceTime` plays in the edit, or nil when that moment is left out.
+    static func editTime(of sourceTime: Double, in editor: EditorState) -> Double? {
+        let clip = editor.includedClips.first {
+            $0.sourceStart <= sourceTime + 0.000_001 && sourceTime < $0.sourceEnd
+        }
+        guard let clip else {
+            return nil
+        }
+        return try? editor.editTime(atSourceTime: max(sourceTime, clip.sourceStart), in: clip.id)
+    }
+
+    /// Starts reviewing found rallies; the edit becomes their checked rallies.
+    func beginRallyReview(_ id: UUID, review: RallyReview, notes: [RallyFramingNote]) async -> Bool {
+        rallyReview = review
+        rallyNotes = notes
+        let applied = await updateRallyReview(id) { _ in
+        }
+        if !applied {
+            rallyReview = nil
+            rallyNotes = []
+        }
+        return applied
     }
 
     @discardableResult

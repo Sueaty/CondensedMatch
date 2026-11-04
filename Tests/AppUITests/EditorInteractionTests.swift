@@ -453,13 +453,87 @@ final class EditorInteractionTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Just found"].exists)
         attachScreenshot(app, named: "2B shows rallies found so far while scanning")
 
-        XCTAssertTrue(app.staticTexts["4 rallies · 1 to check"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["rally-row-1"].waitForExistence(timeout: 10))
         waitUntilReady(app)
         // Three confident rallies with 0.5 s before and 0.3 s after each; the short one is left out.
         XCTAssertEqual(total(app), 7.8 + 4.8 + 10.8, accuracy: 0.01)
-        XCTAssertEqual(app.staticTexts["editor-selected-clip"].value as? String, "3")
-        XCTAssertTrue(app.buttons["Undo"].isEnabled)
-        attachScreenshot(app, named: "Found rallies replace the timeline")
+        XCTAssertTrue(app.staticTexts["CHECK THESE"].exists)
+        XCTAssertTrue(app.staticTexts["RALLIES"].exists)
+        XCTAssertEqual(app.buttons["rally-check-3"].value as? String, "Left out")
+        XCTAssertEqual(app.buttons["rally-check-1"].value as? String, "Included")
+        XCTAssertFalse(app.scrollViews["editor-timeline-scroll"].exists)
+        XCTAssertFalse(app.otherElements["rally-bar"].exists)
+        XCTAssertTrue(app.buttons["editor-export"].label.hasPrefix("Export 3 rallies"))
+        XCTAssertFalse(app.buttons["Undo"].isEnabled)
+        attachScreenshot(app, named: "Found rallies are listed in place of the timeline")
+    }
+
+    func testRallyListCheckTrimRemoveAndUndo() {
+        let app = openRallyList()
+        let base = 7.8 + 4.8 + 10.8
+
+        app.buttons["rally-check-3"].tap()
+        waitForTotal(app, base + 2.3)
+        XCTAssertTrue(app.buttons["editor-export"].label.hasPrefix("Export 4 rallies"))
+        app.buttons["Undo"].tap()
+        waitForTotal(app, base)
+        app.buttons["Redo"].tap()
+        waitForTotal(app, base + 2.3)
+
+        // An expanded rally plays on its own; the edit's time and play button step aside.
+        app.buttons["rally-row-4"].tap()
+        let play = app.buttons["rally-preview-play"]
+        XCTAssertTrue(play.waitForExistence(timeout: 3))
+        XCTAssertFalse(app.buttons["Play"].exists)
+        let elapsed = app.staticTexts["rally-preview-time"]
+        XCTAssertEqual(elapsed.label, "0:00.0 / 0:10.8")
+        play.tap()
+        let played = NSPredicate { _, _ in
+            !elapsed.label.hasPrefix("0:00.0")
+        }
+        XCTAssertEqual(
+            XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: played, object: nil)], timeout: 5),
+            .completed, "Rally preview stayed at \(elapsed.label)")
+        app.buttons["Pause rally"].tap()
+        app.buttons["rally-row-4"].tap()
+        XCTAssertTrue(app.buttons["Play"].waitForExistence(timeout: 3))
+
+        // Dragging the end handle lengthens the rally.
+        app.buttons["rally-row-1"].tap()
+        let endHandle = app.descendants(matching: .any)["Rally end"].firstMatch
+        XCTAssertTrue(endHandle.waitForExistence(timeout: 3))
+        let grab = endHandle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        grab.press(forDuration: 0.2, thenDragTo: grab.withOffset(CGVector(dx: 40, dy: 0)))
+        let lengthened = NSPredicate { _, _ in
+            self.total(app) > base + 2.3 + 0.5
+        }
+        XCTAssertEqual(
+            XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: lengthened, object: nil)], timeout: 5),
+            .completed, "Total stayed at \(total(app))")
+        XCTAssertEqual(app.staticTexts["rally-trim-was"].label, "was 0:07.8")
+        attachScreenshot(app, named: "An expanded rally trims by dragging its handles")
+        app.buttons["rally-trim-reset"].tap()
+        waitForTotal(app, base + 2.3)
+
+        app.buttons["rally-not-a-rally"].tap()
+        waitForTotal(app, base + 2.3 - 7.8)
+        XCTAssertFalse(app.buttons["rally-row-1"].exists)
+        app.buttons["Undo"].tap()
+        waitForTotal(app, base + 2.3)
+        XCTAssertTrue(app.buttons["rally-row-1"].exists)
+
+        app.buttons["editor-back"].tap()
+        XCTAssertTrue(app.alerts["Discard this edit?"].waitForExistence(timeout: 3))
+    }
+
+    func testFramingNoteBannerCanBeDismissed() {
+        let app = openRallyList(environment: ["RALLYCUT_EDITOR_TEST_RALLY_NOTES": "1"])
+        let banner = app.otherElements["rally-note"]
+        XCTAssertTrue(banner.waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["The near player was often out of frame, so a few rallies may be missing or cut short."].exists)
+        attachScreenshot(app, named: "A framing note sits above the rally list")
+        app.buttons["rally-note-dismiss"].tap()
+        XCTAssertFalse(banner.waitForExistence(timeout: 1))
     }
 
     func testStoppingFindKeepsTimelineAndFreeFind() {
@@ -571,6 +645,24 @@ final class EditorInteractionTests: XCTestCase {
         XCTAssertTrue(export.isHittable)
         XCTAssertLessThanOrEqual(export.frame.maxY, app.windows.firstMatch.frame.maxY - 15)
         return app
+    }
+
+    private func openRallyList(environment: [String: String] = [:]) -> XCUIApplication {
+        let app = openEditor(environment: environment.merging(["RALLYCUT_EDITOR_TEST_RALLY_SCAN_SECONDS": "0.5"]) { old, _ in
+            old
+        })
+        app.buttons["rally-bar-find"].tap()
+        XCTAssertTrue(app.buttons["rally-row-1"].waitForExistence(timeout: 10))
+        waitUntilReady(app)
+        return app
+    }
+
+    private func waitForTotal(_ app: XCUIApplication, _ expected: Double) {
+        let matches = NSPredicate { _, _ in
+            abs(self.total(app) - expected) < 0.01
+        }
+        let result = XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: matches, object: nil)], timeout: 5)
+        XCTAssertEqual(result, .completed, "Total \(total(app)) did not become \(expected)")
     }
 
     private func attachScreenshot(_ app: XCUIApplication, named name: String) {

@@ -71,25 +71,34 @@ struct VideoEditorView: View {
     @State private var isRallyFindingRejected = false
     @State private var findingSession: RallyFindingSession?
     @State private var pendingRejection: RallyRejection?
+    @State private var expandedRallyID: ReviewRally.ID?
+    @State private var rallyFrames: RallyFrameLoader?
+    @State private var rallyPreview: RallyPreviewPlayer?
 
     var body: some View {
         if let project = store.project(id), let editor = project.editorState {
             GeometryReader { geometry in
 
+                let review = store.rallyReview
+                // While a rally is expanded, the preview plays only that rally from the source.
+                let soloPreview = review != nil && expandedRallyID != nil ? rallyPreview : nil
+                // The rally list scrolls, so the preview takes a fixed share instead of what the controls leave.
+                let previewMaxHeight = review == nil
+                    ? min(geometry.size.height * 0.42, geometry.size.height - controlsHeight - 36)
+                    : geometry.size.height * 0.3
                 let previewSize = EditorPreviewLayout.size(
                     sourceWidth: project.source.width,
                     sourceHeight: project.source.height,
                     maxWidth: max(0, geometry.size.width - 32),
-                    maxHeight: max(
-                        0, min(geometry.size.height * 0.42, geometry.size.height - controlsHeight - 36))
+                    maxHeight: max(0, previewMaxHeight)
                 )
                 VStack(spacing: 12) {
-                    EditorVideoSurface(player: playback.player)
+                    EditorVideoSurface(player: soloPreview?.player ?? playback.player)
                         .frame(width: previewSize.width, height: previewSize.height)
                         .background(.black, in: RoundedRectangle(cornerRadius: 14))
                         .clipShape(RoundedRectangle(cornerRadius: 14))
                         .overlay {
-                            if playback.isPreparing {
+                            if playback.isPreparing && soloPreview == nil {
                                 ProgressView("Preparing preview")
                                     .tint(.white)
                                     .foregroundStyle(.white)
@@ -115,152 +124,190 @@ struct VideoEditorView: View {
                             .monospacedDigit()
                             .lineLimit(1)
                             .frame(maxWidth: .infinity, alignment: .leading)
+                            .opacity(soloPreview == nil ? 1 : 0)
+                            .accessibilityHidden(soloPreview != nil)
 
-                            Button {
-                                playback.togglePlayback()
-                            } label: {
-                                Image(systemName: playback.isPlaying ? "pause.fill" : "play.fill")
-                                    .font(.system(size: 20, weight: .bold))
+                            if soloPreview == nil {
+                                Button {
+                                    playback.togglePlayback()
+                                } label: {
+                                    Image(systemName: playback.isPlaying ? "pause.fill" : "play.fill")
+                                        .font(.system(size: 20, weight: .bold))
+                                        .frame(width: 44, height: 44)
+                                        .background(MatchColor.ink.opacity(0.12), in: Circle())
+                                }
+                                .disabled(!canEdit || review?.checkedCount == 0)
+                                .accessibilityLabel(playback.isPlaying ? "Pause" : "Play")
+                            } else {
+                                // The expanded rally has its own play button; keep the row's layout.
+                                Color.clear
                                     .frame(width: 44, height: 44)
-                                    .background(MatchColor.ink.opacity(0.12), in: Circle())
+                                    .accessibilityHidden(true)
                             }
-                            .disabled(!canEdit)
-                            .accessibilityLabel(playback.isPlaying ? "Pause" : "Play")
 
                             HStack(spacing: 0) {
                                 Button {
-                                    performEdit {
-                                        $0.undo()
+                                    if review != nil {
+                                        reviewEdit {
+                                            $0.undo()
+                                        }
+                                    } else {
+                                        performEdit {
+                                            $0.undo()
+                                        }
                                     }
                                 } label: {
                                     Image(systemName: "arrow.uturn.backward")
-                                        .opacity(editor.canUndo ? 1 : 0.3)
+                                        .opacity(canUndo(editor) ? 1 : 0.3)
                                         .frame(width: 44, height: 44)
                                         .contentShape(Rectangle())
                                 }
-                                .disabled(!canEdit || !editor.canUndo)
+                                .disabled(!canEdit || !canUndo(editor))
                                 .accessibilityLabel("Undo")
 
                                 Button {
-                                    performEdit {
-                                        $0.redo()
+                                    if review != nil {
+                                        reviewEdit {
+                                            $0.redo()
+                                        }
+                                    } else {
+                                        performEdit {
+                                            $0.redo()
+                                        }
                                     }
                                 } label: {
                                     Image(systemName: "arrow.uturn.forward")
-                                        .opacity(editor.canRedo ? 1 : 0.3)
+                                        .opacity(canRedo(editor) ? 1 : 0.3)
                                         .frame(width: 44, height: 44)
                                         .contentShape(Rectangle())
                                 }
-                                .disabled(!canEdit || !editor.canRedo)
+                                .disabled(!canEdit || !canRedo(editor))
                                 .accessibilityLabel("Redo")
                             }
                             .frame(maxWidth: .infinity, alignment: .trailing)
                         }
 
-                        EditorTimeline(
-                            editor: editor,
-                            sourceURL: store.sourceURL(project),
-                            position: playback.position,
-                            isEnabled: playback.isReady && !playback.isPreparing && !isOperating
-                                && !splitLookup.isFindingFrame,
-                            onScrubStart: {
-                                isUserScrolling = true
-                                playback.beginScrubbing()
-                            },
-                            onScrub: {
-                                playback.scrub(to: $0)
-                            },
-                            onScrubEnd: { time in
-                                playback.endScrubbing(at: time)
-                                isUserScrolling = false
-                                Task {
-                                    await store.updateEditor(id) { state in
-                                        guard state.revision == editor.revision else {
-                                            return
+                        if let review, let rallyFrames, let rallyPreview {
+                            RallyReviewList(
+                                review: review,
+                                notes: store.rallyNotes,
+                                frames: rallyFrames,
+                                preview: rallyPreview,
+                                isEnabled: canEdit,
+                                expandedID: $expandedRallyID,
+                                onDismissNotes: {
+                                    store.rallyNotes = []
+                                },
+                                onAction: { action in
+                                    performReviewAction(action)
+                                }
+                            )
+                            .frame(maxHeight: .infinity)
+                        } else {
+                            EditorTimeline(
+                                editor: editor,
+                                sourceURL: store.sourceURL(project),
+                                position: playback.position,
+                                isEnabled: playback.isReady && !playback.isPreparing && !isOperating
+                                    && !splitLookup.isFindingFrame,
+                                onScrubStart: {
+                                    isUserScrolling = true
+                                    playback.beginScrubbing()
+                                },
+                                onScrub: {
+                                    playback.scrub(to: $0)
+                                },
+                                onScrubEnd: { time in
+                                    playback.endScrubbing(at: time)
+                                    isUserScrolling = false
+                                    Task {
+                                        await store.updateEditor(id) { state in
+                                            guard state.revision == editor.revision else {
+                                                return
+                                            }
+                                            try state.setPlayhead(min(time, state.totalDuration))
                                         }
-                                        try state.setPlayhead(min(time, state.totalDuration))
+                                    }
+                                },
+                                onSelect: { clipID in
+                                    playback.pause()
+                                    Task {
+                                        await store.updateEditor(id) { state in
+                                            guard state.revision == editor.revision else {
+                                                return
+                                            }
+                                            try state.select(clipID)
+                                            try state.setPlayhead(min(playback.position, state.totalDuration))
+                                        }
                                     }
                                 }
-                            },
-                            onSelect: { clipID in
-                                playback.pause()
-                                Task {
-                                    await store.updateEditor(id) { state in
-                                        guard state.revision == editor.revision else {
-                                            return
-                                        }
-                                        try state.select(clipID)
-                                        try state.setPlayhead(min(playback.position, state.totalDuration))
-                                    }
-                                }
-                            }
-                        )
+                            )
 
-                        HStack(spacing: 8) {
-                            if let selected = editor.clips.first(where: {
-                                $0.id == editor.selectedClipID
-                            }) {
-                                Text(
-                                    "Clip \(editor.includedClips.firstIndex(where: { $0.id == selected.id }).map { $0 + 1 } ?? 0)"
-                                )
+                            HStack(spacing: 8) {
+                                if let selected = editor.clips.first(where: {
+                                    $0.id == editor.selectedClipID
+                                }) {
+                                    Text(
+                                        "Clip \(editor.includedClips.firstIndex(where: { $0.id == selected.id }).map { $0 + 1 } ?? 0)"
+                                    )
+                                    .typography(.body)
+                                    .bold()
+                                    .lineLimit(1)
+                                    .accessibilityIdentifier("editor-selected-clip")
+                                    .accessibilityValue(String(editor.includedClips.count))
+                                }
+
+                                Spacer(minLength: 8)
+
+                                HStack(spacing: 12) {
+                                    Button {
+                                        split(project: project)
+                                    } label: {
+                                        Label(
+                                            splitLookup.isFindingFrame ? "Finding frame…" : "Split",
+                                            systemImage: "scissors")
+                                    }
+                                    .disabled(!canEdit)
+                                    .accessibilityIdentifier("editor-split")
+
+                                    Button {
+                                        performEdit {
+                                            try $0.excludeSelected()
+                                        }
+                                    } label: {
+                                        Label("Delete", systemImage: "trash")
+                                    }
+                                    .disabled(
+                                        !canEdit || editor.includedClips.count <= 1 || editor.selectedClipID == nil
+                                    )
+                                    .accessibilityIdentifier("editor-delete")
+                                }
+                                .buttonStyle(.bordered)
                                 .typography(.body)
-                                .bold()
-                                .lineLimit(1)
-                                .accessibilityIdentifier("editor-selected-clip")
-                                .accessibilityValue(String(editor.includedClips.count))
                             }
 
-                            Spacer(minLength: 8)
-
-                            HStack(spacing: 12) {
-                                Button {
-                                    split(project: project)
-                                } label: {
-                                    Label(
-                                        splitLookup.isFindingFrame ? "Finding frame…" : "Split",
-                                        systemImage: "scissors")
+                            RallyBar(
+                                state: rallyBarState,
+                                onFind: {
+                                    findRallies()
+                                },
+                                    onGoPro: {
+                                    showToast("RallyCut Pro is coming soon.")
                                 }
-                                .disabled(!canEdit)
-                                .accessibilityIdentifier("editor-split")
-
-                                Button {
-                                    performEdit {
-                                        try $0.excludeSelected()
-                                    }
-                                } label: {
-                                    Label("Delete", systemImage: "trash")
-                                }
-                                .disabled(
-                                    !canEdit || editor.includedClips.count <= 1 || editor.selectedClipID == nil
-                                )
-                                .accessibilityIdentifier("editor-delete")
-                            }
-                            .buttonStyle(.bordered)
-                            .typography(.body)
+                            )
                         }
-
-                        RallyBar(
-                            state: rallyBarState,
-                            onFind: {
-                                findRallies()
-                            },
-                            onGoPro: {
-                                showToast("RallyCut Pro is coming soon.")
-                            },
-                            onReview: {
-                                showToast("Rally review is coming soon.")
-                            }
-                        )
 
                         Button {
                             showExport = true
                         } label: {
-                            Label("Export", systemImage: "square.and.arrow.up")
+                            Label(exportTitle(editor: editor, review: review), systemImage: "square.and.arrow.up")
                         }
                         .buttonStyle(PrimaryButton(dark: true))
-                        .disabled(!canEdit)
+                        .disabled(!canEdit || review?.checkedCount == 0)
+                        .accessibilityIdentifier("editor-export")
                     }
-                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxHeight: review == nil ? nil : .infinity, alignment: .top)
+                    .fixedSize(horizontal: false, vertical: review == nil)
                     .onGeometryChange(for: Double.self) { proxy in
                         proxy.size.height
                     } action: { height in
@@ -280,6 +327,12 @@ struct VideoEditorView: View {
             .accessibilityIdentifier("video-editor")
             .onAppear {
                 playback.start()
+                if rallyFrames == nil {
+                    rallyFrames = RallyFrameLoader(source: store.sourceURL(project))
+                }
+                if rallyPreview == nil {
+                    rallyPreview = RallyPreviewPlayer(source: store.sourceURL(project))
+                }
             }
             .task(id: editor.revision) {
                 do {
@@ -290,6 +343,8 @@ struct VideoEditorView: View {
                 }
             }
             .onDisappear {
+                rallyFrames?.stop()
+                rallyPreview?.stop()
                 editTask?.cancel()
                 playback.stop()
                 splitLookup.cancel()
@@ -301,6 +356,19 @@ struct VideoEditorView: View {
                 if phase != .active {
                     playback.pause()
                     splitLookup.cancel()
+                }
+            }
+            .onChange(of: expandedRallyID) { _, rallyID in
+                if let rallyID, let rally = store.rallyReview?.rally(rallyID) {
+                    playback.pause()
+                    rallyPreview?.show(start: rally.start, end: rally.end)
+                } else {
+                    rallyPreview?.pause()
+                }
+            }
+            .onChange(of: expandedRallyID.flatMap { store.rallyReview?.rally($0) }) { _, rally in
+                if let rally {
+                    rallyPreview?.updateRange(start: rally.start, end: rally.end)
                 }
             }
             .onChange(of: store.videoCheck?.isChecking ?? false) { _, isChecking in
@@ -385,9 +453,6 @@ struct VideoEditorView: View {
         if isWaitingForVideoCheck {
             return .checking
         }
-        if let rallies = store.foundRallies {
-            return .done(rallies: rallies.count, toCheck: rallies.filter(\.needsReview).count)
-        }
         let freeFindsLeft = store.freeFindsLeft
         return freeFindsLeft > 0 ? .idle(freeFindsLeft: freeFindsLeft) : .outOfFreeFinds
     }
@@ -434,41 +499,102 @@ struct VideoEditorView: View {
         case .rejected(let rejection):
             pendingRejection = rejection
             findingSession = nil
-        case .found(let rallies):
+        case .found(let rallies, let notes):
             if !rallies.isEmpty {
                 store.consumeFreeFind()
             }
             Task { @MainActor in
-                await applyFoundRallies(rallies)
+                await applyFoundRallies(rallies, notes: notes)
                 findingSession = nil
             }
         }
     }
 
-    private func applyFoundRallies(_ rallies: [FoundRally]) async {
+    /// Replaces the timeline with the rally list.
+    private func applyFoundRallies(_ rallies: [FoundRally], notes: [RallyFramingNote]) async {
         guard let project = store.project(id) else {
             return
         }
-        let segments = RallySegments.segments(
-            for: rallies.map {
-                RallySegments.Rally(start: $0.start, end: $0.end, needsReview: $0.needsReview)
-            },
-            duration: project.source.duration
-        )
-        guard !segments.isEmpty else {
+        guard !rallies.isEmpty else {
             showToast("No rallies were found in this video. You can still edit it by hand.")
             return
         }
-        let applied = await store.updateEditor(id) { state in
-            try state.replace(with: segments)
-        }
-        if applied {
-            store.foundRallies = rallies
+        let review = RallyReview(
+            rallies: rallies.map {
+                RallySegments.Rally(start: $0.start, end: $0.end, needsReview: $0.needsReview)
+            },
+            sourceDuration: project.source.duration
+        )
+        expandedRallyID = nil
+        _ = await store.beginRallyReview(id, review: review, notes: notes)
+    }
+
+    private func performReviewAction(_ action: RallyReviewAction) {
+        switch action {
+        case .setChecked(let rallyID, let isChecked):
+            reviewEdit(focusing: rallyID) {
+                $0.setChecked(rallyID, isChecked)
+            }
+        case .moveStart(let rallyID, let delta):
+            reviewEdit(focusing: rallyID) {
+                $0.moveStart(rallyID, by: delta)
+            }
+        case .moveEnd(let rallyID, let delta):
+            reviewEdit(focusing: rallyID) {
+                $0.moveEnd(rallyID, by: delta)
+            }
+        case .setEdges(let rallyID, let start, let end, let edge):
+            reviewEdit(focusing: rallyID) {
+                $0.setEdges(rallyID, start: start, end: end, moving: edge)
+            }
+        case .reset(let rallyID):
+            reviewEdit(focusing: rallyID) {
+                $0.resetEdges(rallyID)
+            }
+        case .remove(let rallyID):
+            if expandedRallyID == rallyID {
+                expandedRallyID = nil
+            }
+            reviewEdit {
+                $0.remove(rallyID)
+            }
         }
     }
 
+    private func reviewEdit(focusing rallyID: ReviewRally.ID? = nil, _ change: @escaping (inout RallyReview) -> Void) {
+        guard canEdit else {
+            return
+        }
+        playback.pause()
+        isOperating = true
+        editTask = Task { @MainActor in
+            defer {
+                isOperating = false
+            }
+            if !(await store.updateRallyReview(id, focusing: rallyID, change)) {
+                showToast("Your change could not be applied. Please try again.")
+            }
+        }
+    }
+
+    private func canUndo(_ editor: EditorState) -> Bool {
+        store.rallyReview?.canUndo ?? editor.canUndo
+    }
+
+    private func canRedo(_ editor: EditorState) -> Bool {
+        store.rallyReview?.canRedo ?? editor.canRedo
+    }
+
+    private func exportTitle(editor: EditorState, review: RallyReview?) -> String {
+        guard let review else {
+            return "Export"
+        }
+        let count = review.checkedCount
+        return "Export \(count) \(count == 1 ? "rally" : "rallies") · \(timeLabel(editor.totalDuration))"
+    }
+
     private func hasEdits(_ editor: EditorState) -> Bool {
-        editor.canUndo || editor.clips.count > 1
+        store.rallyReview != nil || editor.canUndo || editor.clips.count > 1
     }
 
     private var canEdit: Bool {

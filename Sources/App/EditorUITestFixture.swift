@@ -110,11 +110,15 @@
         }
 
         /// `RALLYCUT_EDITOR_TEST_RALLIES`: `none` finds nothing, `fail` throws; otherwise four rallies.
+        /// `RALLYCUT_EDITOR_TEST_RALLY_NOTES=1` adds a framing note.
         /// `RALLYCUT_EDITOR_TEST_RALLY_SCAN_SECONDS`: how long the fake scan takes.
         private static func rallyFinder() -> RallyFinderFunction {
             let environment = ProcessInfo.processInfo.environment
             let mode = environment["RALLYCUT_EDITOR_TEST_RALLIES"]
             let seconds = environment["RALLYCUT_EDITOR_TEST_RALLY_SCAN_SECONDS"].flatMap(Double.init) ?? 2
+            let notes: [RallyFramingNote] = environment["RALLYCUT_EDITOR_TEST_RALLY_NOTES"] == "1"
+                ? [.nearPlayerOftenMissing]
+                : []
             let rallies = mode == "none"
                 ? []
                 : [
@@ -143,7 +147,7 @@
                 if mode == "fail" {
                     throw MatchError.invalidMedia("The test search failed.")
                 }
-                return .found(rallies)
+                return .found(rallies, notes: notes)
             }
         }
 

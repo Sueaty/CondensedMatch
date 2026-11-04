@@ -4,7 +4,7 @@ import SwiftUI
 
 /// How a rally search ended, reported back to the editor.
 enum RallyFindingCompletion {
-    case found([FoundRally])
+    case found([FoundRally], notes: [RallyFramingNote])
     case rejected(RallyRejection)
     case failed(String)
     case stopped
@@ -74,11 +74,11 @@ final class RallyFindingSession: Identifiable {
                 return
             }
             switch result {
-            case .success(.found(let rallies)):
+            case .success(.found(let rallies, let notes)):
                 self.rallies = rallies
                 self.fraction = 1
                 self.step = .placingRallies
-                completion(.found(rallies))
+                completion(.found(rallies, notes: notes))
             case .success(.rejected(let rejection)):
                 completion(.rejected(rejection))
             case .failure(let error):
