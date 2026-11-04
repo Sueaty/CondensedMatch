@@ -43,7 +43,7 @@ struct ProjectView: View {
             Button {
                 dismiss()
             } label: {
-                Image(systemName: "chevron.left")
+                Image(systemName: "cevron.left")
             }
             .accessibilityLabel("Back")
         }
@@ -69,6 +69,8 @@ struct VideoEditorView: View {
     @State private var isWaitingForVideoCheck = false
     @State private var rallyRejection: RallyRejection?
     @State private var isRallyFindingRejected = false
+    @State private var findingSession: RallyFindingSession?
+    @State private var pendingRejection: RallyRejection?
 
     var body: some View {
         if let project = store.project(id), let editor = project.editorState {
@@ -244,6 +246,9 @@ struct VideoEditorView: View {
                             },
                             onGoPro: {
                                 showToast("RallyCut Pro is coming soon.")
+                            },
+                            onReview: {
+                                showToast("Rally review is coming soon.")
                             }
                         )
 
@@ -309,6 +314,18 @@ struct VideoEditorView: View {
                     playback.pause()
                 }
             }
+            .fullScreenCover(item: $findingSession) {
+                // Alerts can only appear once the full-screen cover has gone.
+                if let rejection = pendingRejection {
+                    pendingRejection = nil
+                    playback.pause()
+                    rallyRejection = rejection
+                }
+            } content: { session in
+                RallyFindingView(session: session) { completion in
+                    finishFinding(completion)
+                }
+            }
             .sheet(isPresented: $showExport) {
                 ExportView(store: store, projectID: id)
             }
@@ -368,6 +385,9 @@ struct VideoEditorView: View {
         if isWaitingForVideoCheck {
             return .checking
         }
+        if let rallies = store.foundRallies {
+            return .done(rallies: rallies.count, toCheck: rallies.filter(\.needsReview).count)
+        }
         let freeFindsLeft = store.freeFindsLeft
         return freeFindsLeft > 0 ? .idle(freeFindsLeft: freeFindsLeft) : .outOfFreeFinds
     }
@@ -384,8 +404,66 @@ struct VideoEditorView: View {
         case .rejected(let rejection):
             playback.pause()
             rallyRejection = rejection
-        case .passed, nil:
-            showToast("Rally detection is coming soon.")
+        case .passed(let check):
+            startFinding(check: check)
+        case nil:
+            startFinding(check: nil)
+        }
+    }
+
+    private func startFinding(check: RallyVideoCheck?) {
+        guard store.freeFindsLeft > 0, let project = store.project(id) else {
+            return
+        }
+        playback.pause()
+        findingSession = RallyFindingSession(
+            source: store.sourceURL(project),
+            check: check,
+            finder: store.rallyFinder
+        )
+    }
+
+    /// Uses a free find only when the search finished and found rallies, then puts them on the timeline.
+    private func finishFinding(_ completion: RallyFindingCompletion) {
+        switch completion {
+        case .stopped:
+            findingSession = nil
+        case .failed(let message):
+            findingSession = nil
+            showToast("Rally finding stopped: \(message)")
+        case .rejected(let rejection):
+            pendingRejection = rejection
+            findingSession = nil
+        case .found(let rallies):
+            if !rallies.isEmpty {
+                store.consumeFreeFind()
+            }
+            Task { @MainActor in
+                await applyFoundRallies(rallies)
+                findingSession = nil
+            }
+        }
+    }
+
+    private func applyFoundRallies(_ rallies: [FoundRally]) async {
+        guard let project = store.project(id) else {
+            return
+        }
+        let segments = RallySegments.segments(
+            for: rallies.map {
+                RallySegments.Rally(start: $0.start, end: $0.end, needsReview: $0.needsReview)
+            },
+            duration: project.source.duration
+        )
+        guard !segments.isEmpty else {
+            showToast("No rallies were found in this video. You can still edit it by hand.")
+            return
+        }
+        let applied = await store.updateEditor(id) { state in
+            try state.replace(with: segments)
+        }
+        if applied {
+            store.foundRallies = rallies
         }
     }
 

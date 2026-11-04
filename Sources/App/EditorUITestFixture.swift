@@ -16,6 +16,7 @@
         @MainActor
         static func install(in store: AppStore) async throws {
             store.videoChecker = videoChecker()
+            store.rallyFinder = rallyFinder()
             let usedFreeFinds = ProcessInfo.processInfo.environment["RALLYCUT_EDITOR_TEST_FREE_FINDS_USED"]
                 .flatMap {
                     Int($0)
@@ -105,6 +106,44 @@
             return { _ in
                 try? await Task.sleep(for: .seconds(delay))
                 return status
+            }
+        }
+
+        /// `RALLYCUT_EDITOR_TEST_RALLIES`: `none` finds nothing, `fail` throws; otherwise four rallies.
+        /// `RALLYCUT_EDITOR_TEST_RALLY_SCAN_SECONDS`: how long the fake scan takes.
+        private static func rallyFinder() -> RallyFinderFunction {
+            let environment = ProcessInfo.processInfo.environment
+            let mode = environment["RALLYCUT_EDITOR_TEST_RALLIES"]
+            let seconds = environment["RALLYCUT_EDITOR_TEST_RALLY_SCAN_SECONDS"].flatMap(Double.init) ?? 2
+            let rallies = mode == "none"
+                ? []
+                : [
+                    FoundRally(id: 0, start: 5, end: 12, confidence: 0.9, reviewReason: nil),
+                    FoundRally(id: 1, start: 20, end: 24, confidence: 0.8, reviewReason: nil),
+                    FoundRally(id: 2, start: 30, end: 31.5, confidence: 0.6, reviewReason: .veryShort),
+                    FoundRally(id: 3, start: 40, end: 50, confidence: 0.9, reviewReason: nil),
+                ]
+            return { _, _, progress in
+                let steps = 10
+                for step in 1...steps {
+                    try await Task.sleep(for: .seconds(seconds / Double(steps)))
+                    let fraction = Double(step) / Double(steps)
+                    let settled = rallies.filter {
+                        $0.end <= fraction * 60
+                    }
+                    progress(
+                        .scanning(
+                            fraction: fraction,
+                            scannedSeconds: fraction * 60,
+                            secondsLeft: fraction > 0.05 ? seconds * (1 - fraction) : nil,
+                            ralliesSoFar: settled
+                        )
+                    )
+                }
+                if mode == "fail" {
+                    throw MatchError.invalidMedia("The test search failed.")
+                }
+                return .found(rallies)
             }
         }
 

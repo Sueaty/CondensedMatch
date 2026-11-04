@@ -437,6 +437,62 @@ final class EditorInteractionTests: XCTestCase {
         XCTAssertTrue(toast.label.contains("Pro"))
     }
 
+    func testFindRalliesShowsProgressThenPutsRalliesOnTimeline() {
+        let app = openEditor(environment: ["RALLYCUT_EDITOR_TEST_RALLY_SCAN_SECONDS": "5"])
+        XCTAssertEqual(total(app), 60, accuracy: 0.01)
+        app.buttons["rally-bar-find"].tap()
+
+        XCTAssertTrue(app.navigationBars["Finding rallies"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["Scanning the match"].exists)
+        let foundSome = NSPredicate { _, _ in
+            Int(app.staticTexts["rally-finding-count"].label) ?? 0 >= 2
+        }
+        XCTAssertEqual(
+            XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: foundSome, object: nil)], timeout: 5),
+            .completed)
+        XCTAssertTrue(app.staticTexts["Just found"].exists)
+        attachScreenshot(app, named: "2B shows rallies found so far while scanning")
+
+        XCTAssertTrue(app.staticTexts["4 rallies · 1 to check"].waitForExistence(timeout: 10))
+        waitUntilReady(app)
+        // Three confident rallies with 0.5 s before and 0.3 s after each; the short one is left out.
+        XCTAssertEqual(total(app), 7.8 + 4.8 + 10.8, accuracy: 0.01)
+        XCTAssertEqual(app.staticTexts["editor-selected-clip"].value as? String, "3")
+        XCTAssertTrue(app.buttons["Undo"].isEnabled)
+        attachScreenshot(app, named: "Found rallies replace the timeline")
+    }
+
+    func testStoppingFindKeepsTimelineAndFreeFind() {
+        let app = openEditor(environment: ["RALLYCUT_EDITOR_TEST_RALLY_SCAN_SECONDS": "30"])
+        app.buttons["rally-bar-find"].tap()
+        let cancel = app.buttons["rally-finding-cancel"]
+        XCTAssertTrue(cancel.waitForExistence(timeout: 3))
+
+        cancel.tap()
+        let alert = app.alerts["Stop finding rallies?"]
+        XCTAssertTrue(alert.waitForExistence(timeout: 3))
+        alert.buttons["Keep Finding"].tap()
+        XCTAssertTrue(app.navigationBars["Finding rallies"].exists)
+
+        cancel.tap()
+        XCTAssertTrue(alert.waitForExistence(timeout: 3))
+        alert.buttons["Stop"].tap()
+        XCTAssertTrue(app.otherElements["rally-bar-subtitle"].waitForExistence(timeout: 5))
+        XCTAssertEqual(app.otherElements["rally-bar-subtitle"].label, "2 free finds left today")
+        XCTAssertEqual(total(app), 60, accuracy: 0.01)
+        XCTAssertFalse(app.buttons["Undo"].isEnabled)
+    }
+
+    func testFindingNoRalliesKeepsTimeline() {
+        let app = openEditor(environment: ["RALLYCUT_EDITOR_TEST_RALLIES": "none"])
+        app.buttons["rally-bar-find"].tap()
+        let toast = app.otherElements["editor-toast"]
+        XCTAssertTrue(toast.waitForExistence(timeout: 10))
+        XCTAssertTrue(toast.label.contains("No rallies"))
+        XCTAssertEqual(total(app), 60, accuracy: 0.01)
+        XCTAssertEqual(app.otherElements["rally-bar-subtitle"].label, "2 free finds left today")
+    }
+
     func testFindRalliesWaitsInBarWhileVideoCheckRuns() {
         let app = openEditor(environment: ["RALLYCUT_EDITOR_TEST_VIDEO_CHECK_DELAY": "4"])
         app.buttons["rally-bar-find"].tap()
@@ -448,11 +504,9 @@ final class EditorInteractionTests: XCTestCase {
         XCTAssertTrue(app.buttons["Export"].isEnabled)
         attachScreenshot(app, named: "Find rallies waits in the bar while the video check runs")
 
-        let toast = app.otherElements["editor-toast"]
-        XCTAssertTrue(toast.waitForExistence(timeout: 8))
-        XCTAssertTrue(toast.label.contains("coming soon"))
+        // Once the check passes, the search starts on its own.
+        XCTAssertTrue(app.navigationBars["Finding rallies"].waitForExistence(timeout: 8))
         XCTAssertFalse(checking.exists)
-        XCTAssertTrue(app.buttons["rally-bar-find"].isEnabled)
     }
 
     func testRejectionAfterWaitingShowsAlertAndDisablesFindRallies() {

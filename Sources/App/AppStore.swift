@@ -30,12 +30,24 @@ enum VideoCheckStatus: Sendable {
     }
 }
 
+/// The app's view of a finished rally search.
+enum RallyFindingStatus: Sendable {
+    case found([FoundRally])
+    case rejected(RallyRejection)
+}
+
+typealias RallyFinderFunction = @Sendable (
+    URL, RallyVideoCheck?, @escaping @Sendable (RallyFindingProgress) -> Void
+) async throws -> RallyFindingStatus
+
 @MainActor
 @Observable
 final class AppStore {
     private(set) var activeProject: MatchProject?
     private(set) var videoCheck: VideoCheckStatus?
     private(set) var freeFinds: FreeFindAllowance
+    /// Rallies from the last finished search in this session, kept for reviewing them later.
+    var foundRallies: [FoundRally]?
     var errorMessage: String?
     var importing = false
     var importProgress = 0.0
@@ -43,6 +55,15 @@ final class AppStore {
     /// Replaced by UI tests so they do not run the real check.
     var videoChecker: @Sendable (URL) async -> VideoCheckStatus = { url in
         await VideoCheckStatus.run(on: url)
+    }
+    /// Replaced by UI tests so they do not run the real search.
+    var rallyFinder: RallyFinderFunction = { url, check, progress in
+        switch try await RallyFinder.find(url: url, check: check, progress: progress) {
+        case .rejected(let rejection):
+            return .rejected(rejection)
+        case .found(let result):
+            return .found(result.rallies)
+        }
     }
     private let assets = SourceAssetStore()
     private var importTransfer: Progress?
@@ -96,7 +117,8 @@ final class AppStore {
     }
 
     /// Uses one of today's free finds. Returns false when none are left.
-    /// Call this only when rally analysis finishes, so a cancelled or failed analysis keeps the free find.
+    /// Call this only when rally analysis finishes with at least one rally, so a cancelled, failed or empty
+    /// analysis keeps the free find.
     @discardableResult
     func consumeFreeFind() -> Bool {
         guard freeFinds.consume(on: .now) else {
@@ -207,6 +229,7 @@ final class AppStore {
         videoCheckTask?.cancel()
         videoCheckTask = nil
         videoCheck = nil
+        foundRallies = nil
     }
 
     @discardableResult
