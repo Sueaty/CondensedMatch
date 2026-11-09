@@ -100,6 +100,13 @@ final class RallyPreviewPlayer {
         seek(to: start)
     }
 
+    /// Shows the whole video paused at `time`, for marking a missed rally.
+    func showWhole(at time: Double, duration: Double) {
+        pause()
+        range = 0...duration
+        seek(to: min(max(0, time), duration))
+    }
+
     /// Follows trimmed edges without interrupting playback.
     func updateRange(start: Double, end: Double) {
         range = start...end
@@ -184,6 +191,7 @@ struct RallyReviewList: View {
     let isEnabled: Bool
     @Binding var expandedID: ReviewRally.ID?
     let onDismissNotes: () -> Void
+    let onAddMissed: () -> Void
     let onAction: (RallyReviewAction) -> Void
 
     var body: some View {
@@ -202,12 +210,25 @@ struct RallyReviewList: View {
                         }
                     }
 
-                    if !review.confident.isEmpty {
-                        groupHeader(title: "Rallies", count: review.confident.count, dot: MatchColor.lime)
-
-                        ForEach(review.confident) { rally in
-                            row(rally)
+                    // Always shown: it holds the way to add a missed rally.
+                    groupHeader(title: "Rallies", count: review.confident.count, dot: MatchColor.lime) {
+                        Button {
+                            onAddMissed()
+                        } label: {
+                            Label("Add missed", systemImage: "plus")
+                                .font(.caption)
+                                .fontWeight(.semibold)
+                                .foregroundStyle(MatchColor.ink)
+                                .frame(minHeight: 32)
+                                .contentShape(Rectangle())
                         }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Add a missed rally")
+                        .accessibilityIdentifier("rally-add-missed")
+                    }
+
+                    ForEach(review.confident) { rally in
+                        row(rally)
                     }
                 }
                 .disabled(!isEnabled)
@@ -224,24 +245,32 @@ struct RallyReviewList: View {
         .accessibilityIdentifier("rally-list")
     }
 
-    private func groupHeader(title: String, count: Int, dot: Color) -> some View {
+    private func groupHeader(
+        title: String, count: Int, dot: Color, @ViewBuilder trailing: () -> some View = { EmptyView() }
+    ) -> some View {
         HStack(spacing: 6) {
-            Circle()
-                .fill(dot)
-                .frame(width: 8, height: 8)
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(dot)
+                    .frame(width: 8, height: 8)
 
-            Text(title.uppercased())
-                .font(.caption)
-                .fontWeight(.bold)
-                .tracking(0.6)
+                Text(title.uppercased())
+                    .font(.caption)
+                    .fontWeight(.bold)
+                    .tracking(0.6)
 
-            Text("\(count)")
-                .font(.caption)
+                Text("\(count)")
+                    .font(.caption)
+            }
+            .foregroundStyle(MatchColor.muted)
+            .accessibilityElement(children: .combine)
+
+            Spacer(minLength: 8)
+
+            trailing()
         }
-        .foregroundStyle(MatchColor.muted)
         .padding(.top, 10)
         .padding(.bottom, 6)
-        .accessibilityElement(children: .combine)
     }
 
     @ViewBuilder
@@ -343,7 +372,7 @@ private struct RallyRow: View {
             }
             .buttonStyle(.plain)
             .padding(.horizontal, -11)
-            .accessibilityLabel("Rally \(rally.id)")
+            .accessibilityLabel(rally.title)
             .accessibilityValue(rally.isChecked ? "Included" : "Left out")
             .accessibilityIdentifier("rally-check-\(rally.id)")
 
@@ -354,7 +383,7 @@ private struct RallyRow: View {
                     thumbnail
 
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Rally \(rally.id)")
+                        Text(rally.title)
                             .typography(.body)
                             .fontWeight(.semibold)
                             .foregroundStyle(rally.isChecked ? MatchColor.ink : MatchColor.muted)
@@ -462,23 +491,7 @@ private struct InlineTrim: View {
             strip(edges: edges)
 
             HStack(spacing: 10) {
-                Button {
-                    preview.togglePlayback()
-                } label: {
-                    Image(systemName: preview.isPlaying ? "pause.fill" : "play.fill")
-                        .font(.system(size: 13, weight: .bold))
-                        .foregroundStyle(MatchColor.lime)
-                        .frame(width: 32, height: 32)
-                        .background(MatchColor.ink, in: Circle())
-                        .frame(width: 44, height: 44)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .padding(.horizontal, -6)
-                .padding(.vertical, -6)
-                .disabled(dragEdges != nil)
-                .accessibilityLabel(preview.isPlaying ? "Pause rally" : "Play rally")
-                .accessibilityIdentifier("rally-preview-play")
+                RallyPlayButton(preview: preview, isEnabled: dragEdges == nil)
 
                 Text(elapsedLabel(edges: edges))
                     .font(.caption)
@@ -607,7 +620,7 @@ private struct InlineTrim: View {
                         .frame(width: max(0, endX - startX))
                         .offset(x: startX)
 
-                    Text("\(rally.id)")
+                    Text(rally.isAdded ? "Added" : "\(rally.id)")
                         .font(.system(size: 10, weight: .bold))
                         .foregroundStyle(MatchColor.ink)
                         .padding(.horizontal, 4)
@@ -703,6 +716,13 @@ enum RallyTime {
     static func precise(_ seconds: Double) -> String {
         let tenths = Int((seconds * 10).rounded())
         return clock(Double(tenths / 10)) + ".\(tenths % 10)"
+    }
+}
+
+extension ReviewRally {
+    /// Found rallies go by number; rallies the user added are just "Added".
+    var title: String {
+        isAdded ? "Added rally" : "Rally \(id)"
     }
 }
 

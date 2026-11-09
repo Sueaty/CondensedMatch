@@ -74,6 +74,8 @@ struct VideoEditorView: View {
     @State private var expandedRallyID: ReviewRally.ID?
     @State private var rallyFrames: RallyFrameLoader?
     @State private var rallyPreview: RallyPreviewPlayer?
+    @State private var isAddingRally = false
+    @State private var addedRallyStart: Double?
 
     var body: some View {
         if let project = store.project(id), let editor = project.editorState {
@@ -81,7 +83,7 @@ struct VideoEditorView: View {
 
                 let review = store.rallyReview
                 // While a rally is expanded, the preview plays only that rally from the source.
-                let soloPreview = review != nil && expandedRallyID != nil ? rallyPreview : nil
+                let soloPreview = review != nil && (expandedRallyID != nil || isAddingRally) ? rallyPreview : nil
                 // The rally list scrolls, so the preview takes a fixed share instead of what the controls leave.
                 let previewMaxHeight = review == nil
                     ? min(geometry.size.height * 0.42, geometry.size.height - controlsHeight - 36)
@@ -162,7 +164,7 @@ struct VideoEditorView: View {
                                         .frame(width: 44, height: 44)
                                         .contentShape(Rectangle())
                                 }
-                                .disabled(!canEdit || !canUndo(editor))
+                                .disabled(!canEdit || !canUndo(editor) || isAddingRally)
                                 .accessibilityLabel("Undo")
 
                                 Button {
@@ -181,13 +183,39 @@ struct VideoEditorView: View {
                                         .frame(width: 44, height: 44)
                                         .contentShape(Rectangle())
                                 }
-                                .disabled(!canEdit || !canRedo(editor))
+                                .disabled(!canEdit || !canRedo(editor) || isAddingRally)
                                 .accessibilityLabel("Redo")
                             }
                             .frame(maxWidth: .infinity, alignment: .trailing)
                         }
 
-                        if let review, let rallyFrames, let rallyPreview {
+                        if let review, let rallyFrames, let rallyPreview, isAddingRally {
+                            RallyAddPanel(
+                                review: review,
+                                preview: rallyPreview,
+                                frames: rallyFrames,
+                                markedStart: addedRallyStart,
+                                onMarkStart: {
+                                    rallyPreview.pause()
+                                    addedRallyStart = rallyPreview.position
+                                },
+                                onRemarkStart: {
+                                    if let start = addedRallyStart {
+                                        rallyPreview.scrub(to: start)
+                                    }
+                                    addedRallyStart = nil
+                                },
+                                onMarkEnd: {
+                                    finishAddingRally(end: rallyPreview.position)
+                                },
+                                onCancel: {
+                                    rallyPreview.pause()
+                                    isAddingRally = false
+                                    addedRallyStart = nil
+                                }
+                            )
+                            .frame(maxHeight: .infinity)
+                        } else if let review, let rallyFrames, let rallyPreview {
                             RallyReviewList(
                                 review: review,
                                 notes: store.rallyNotes,
@@ -197,6 +225,9 @@ struct VideoEditorView: View {
                                 expandedID: $expandedRallyID,
                                 onDismissNotes: {
                                     store.rallyNotes = []
+                                },
+                                onAddMissed: {
+                                    startAddingRally(editor: editor, preview: rallyPreview)
                                 },
                                 onAction: { action in
                                     performReviewAction(action)
@@ -303,7 +334,7 @@ struct VideoEditorView: View {
                             Label(exportTitle(editor: editor, review: review), systemImage: "square.and.arrow.up")
                         }
                         .buttonStyle(PrimaryButton(dark: true))
-                        .disabled(!canEdit || review?.checkedCount == 0)
+                        .disabled(!canEdit || review?.checkedCount == 0 || isAddingRally)
                         .accessibilityIdentifier("editor-export")
                     }
                     .frame(maxHeight: review == nil ? nil : .infinity, alignment: .top)
@@ -561,7 +592,11 @@ struct VideoEditorView: View {
         }
     }
 
-    private func reviewEdit(focusing rallyID: ReviewRally.ID? = nil, _ change: @escaping (inout RallyReview) -> Void) {
+    private func reviewEdit(
+        focusing rallyID: ReviewRally.ID? = nil,
+        _ change: @escaping (inout RallyReview) -> Void,
+        then completion: (() -> Void)? = nil
+    ) {
         guard canEdit else {
             return
         }
@@ -571,9 +606,40 @@ struct VideoEditorView: View {
             defer {
                 isOperating = false
             }
-            if !(await store.updateRallyReview(id, focusing: rallyID, change)) {
+            if await store.updateRallyReview(id, focusing: rallyID, change) {
+                completion?()
+            } else {
                 showToast("Your change could not be applied. Please try again.")
             }
+        }
+    }
+
+    /// Opens the add panel at the moment the edit is showing, so a missed rally nearby is easy to reach.
+    private func startAddingRally(editor: EditorState, preview: RallyPreviewPlayer) {
+        guard let review = store.rallyReview else {
+            return
+        }
+        playback.pause()
+        expandedRallyID = nil
+        addedRallyStart = nil
+        isAddingRally = true
+        let sourceTime = (try? editor.sourceTime(atEditTime: playback.position)) ?? 0
+        preview.showWhole(at: sourceTime, duration: review.sourceDuration)
+    }
+
+    /// Adds the marked rally to the list and opens it for trimming.
+    private func finishAddingRally(end: Double) {
+        guard let start = addedRallyStart, let review = store.rallyReview else {
+            return
+        }
+        rallyPreview?.pause()
+        let newID = (review.rallies.map(\.id).max() ?? 0) + 1
+        reviewEdit(focusing: newID) {
+            $0.add(start: start, end: end)
+        } then: {
+            isAddingRally = false
+            addedRallyStart = nil
+            expandedRallyID = newID
         }
     }
 

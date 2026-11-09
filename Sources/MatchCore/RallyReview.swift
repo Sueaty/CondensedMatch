@@ -2,20 +2,23 @@ import Foundation
 
 /// One found rally as the user reviews it: kept or not, and its edges after trimming.
 public struct ReviewRally: Identifiable, Codable, Equatable, Sendable {
-    /// Chronological number among all found rallies, starting at 1.
+    /// Chronological number among found rallies, starting at 1. Added rallies get ids after every found one.
     public let id: Int
     public let detectedStart: Double
     public let detectedEnd: Double
     public let needsReview: Bool
+    /// Marked by the user instead of found; shown as "Added" rather than by number.
+    public let isAdded: Bool
     public var start: Double
     public var end: Double
     public var isChecked: Bool
 
-    public init(id: Int, start: Double, end: Double, needsReview: Bool, isChecked: Bool) {
+    public init(id: Int, start: Double, end: Double, needsReview: Bool, isChecked: Bool, isAdded: Bool = false) {
         self.id = id
         detectedStart = start
         detectedEnd = end
         self.needsReview = needsReview
+        self.isAdded = isAdded
         self.start = start
         self.end = end
         self.isChecked = isChecked
@@ -138,6 +141,21 @@ public struct RallyReview: Codable, Equatable, Sendable {
             $0.start = $0.detectedStart
             $0.end = $0.detectedEnd
         }
+    }
+
+    /// Adds a rally the search missed, kept in the edit. Returns its id.
+    @discardableResult
+    public mutating func add(start: Double, end: Double) -> ReviewRally.ID {
+        let edges = Self.clampedEdges(start: start, end: end, duration: sourceDuration, moving: .end)
+        let id = (rallies.map(\.id).max() ?? 0) + 1
+        record()
+        let rally = ReviewRally(
+            id: id, start: edges.start, end: edges.end, needsReview: false, isChecked: true, isAdded: true)
+        let index = rallies.firstIndex {
+            $0.start > rally.start
+        } ?? rallies.endIndex
+        rallies.insert(rally, at: index)
+        return id
     }
 
     /// Removes a rally from the list. Undo brings it back.

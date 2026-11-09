@@ -77,6 +77,30 @@ final class RallyReviewTests: XCTestCase {
         XCTAssertEqual(review.rallies.map(\.id), [1, 2, 3, 4])
     }
 
+    func testAddedRallyIsCheckedPlacedInTimeOrderAndUndoable() throws {
+        var review = review()
+        let id = review.add(start: 14, end: 17)
+        XCTAssertEqual(id, 5)
+        XCTAssertEqual(review.rallies.map(\.id), [1, 5, 2, 3, 4])
+        let added = try XCTUnwrap(review.rally(id))
+        XCTAssertTrue(added.isAdded)
+        XCTAssertTrue(added.isChecked)
+        XCTAssertFalse(added.isEdited)
+        XCTAssertEqual(review.confident.map(\.id), [1, 5, 2, 4])
+        XCTAssertEqual(review.segments.count, 4)
+
+        review.undo()
+        XCTAssertNil(review.rally(id))
+        review.redo()
+        XCTAssertNotNil(review.rally(id))
+    }
+
+    func testAddedRallyKeepsMinimumLength() throws {
+        var review = review()
+        let id = review.add(start: 14, end: 14.2)
+        XCTAssertEqual(try XCTUnwrap(review.rally(id)).duration, RallyReview.minimumDuration, accuracy: 0.000_001)
+    }
+
     func testSegmentsBuildTheEdit() throws {
         var review = review()
         review.setChecked(2, false)

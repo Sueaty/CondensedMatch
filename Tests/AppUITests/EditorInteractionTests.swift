@@ -526,6 +526,55 @@ final class EditorInteractionTests: XCTestCase {
         XCTAssertTrue(app.alerts["Discard this edit?"].waitForExistence(timeout: 3))
     }
 
+    func testAddingAMissedRallyPutsItInTheList() {
+        let app = openRallyList()
+        let base = 7.8 + 4.8 + 10.8
+
+        app.buttons["rally-add-missed"].tap()
+        XCTAssertTrue(app.otherElements["rally-add-panel"].waitForExistence(timeout: 3))
+        XCTAssertFalse(app.buttons["Play"].exists)
+        XCTAssertFalse(app.buttons["rally-add-end"].exists)
+
+        // The 60 s fixture fits in the four-minute strip, so x maps straight to seconds.
+        let strip = app.descendants(matching: .any)["rally-add-strip"].firstMatch
+        strip.coordinate(withNormalizedOffset: CGVector(dx: 15.0 / 60, dy: 0.5)).tap()
+        app.buttons["rally-add-start"].tap()
+        let end = app.buttons["rally-add-end"]
+        XCTAssertTrue(end.waitForExistence(timeout: 3))
+        XCTAssertFalse(end.isEnabled)
+
+        strip.coordinate(withNormalizedOffset: CGVector(dx: 18.0 / 60, dy: 0.5)).tap()
+        XCTAssertTrue(end.isEnabled)
+        attachScreenshot(app, named: "Marking a missed rally on the source strip")
+        end.tap()
+
+        let lengthened = NSPredicate { _, _ in
+            abs(self.total(app) - (base + 3)) < 0.2
+        }
+        XCTAssertEqual(
+            XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: lengthened, object: nil)], timeout: 5),
+            .completed, "Total is \(total(app))")
+        XCTAssertFalse(app.otherElements["rally-add-panel"].exists)
+        XCTAssertTrue(app.staticTexts["Added rally"].exists)
+        XCTAssertTrue(app.buttons["rally-preview-play"].exists)
+        XCTAssertTrue(app.buttons["editor-export"].label.hasPrefix("Export 4 rallies"))
+
+        app.buttons["Undo"].tap()
+        waitForTotal(app, base)
+        XCTAssertFalse(app.staticTexts["Added rally"].exists)
+    }
+
+    func testCancellingAddKeepsTheList() {
+        let app = openRallyList()
+        app.buttons["rally-add-missed"].tap()
+        XCTAssertTrue(app.otherElements["rally-add-panel"].waitForExistence(timeout: 3))
+        app.buttons["rally-add-start"].tap()
+        app.buttons["rally-add-cancel"].tap()
+        XCTAssertTrue(app.buttons["rally-row-1"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.buttons["Play"].exists)
+        XCTAssertEqual(total(app), 7.8 + 4.8 + 10.8, accuracy: 0.01)
+    }
+
     func testFramingNoteBannerCanBeDismissed() {
         let app = openRallyList(environment: ["RALLYCUT_EDITOR_TEST_RALLY_NOTES": "1"])
         let banner = app.otherElements["rally-note"]
