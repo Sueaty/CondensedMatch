@@ -259,8 +259,7 @@ struct RallyReviewList: View {
                     withAnimation(.snappy) {
                         expandedID = isExpanded ? nil : rally.id
                     }
-                },
-                onAction: onAction
+                }
             )
 
             if isExpanded {
@@ -332,7 +331,6 @@ private struct RallyRow: View {
     let isExpanded: Bool
     let onToggleChecked: () -> Void
     let onToggleExpanded: () -> Void
-    let onAction: (RallyReviewAction) -> Void
 
     var body: some View {
         HStack(spacing: 12) {
@@ -374,46 +372,20 @@ private struct RallyRow: View {
             .accessibilityHint(isExpanded ? "Collapses the trim controls" : "Shows trim controls")
             .accessibilityIdentifier("rally-row-\(rally.id)")
 
-            if isExpanded {
-                Button {
-                    onToggleExpanded()
-                } label: {
-                    Image(systemName: "chevron.up")
-                        .font(.system(size: 14, weight: .semibold))
-                        .frame(width: 32, height: 32)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(MatchColor.muted)
-                .accessibilityLabel("Collapse")
-            } else {
-                Menu {
-                    RallyQuickActions(
-                        rally: rally,
-                        onAdjust: onToggleExpanded,
-                        onAction: onAction
-                    )
-                } label: {
-                    Image(systemName: "ellipsis")
-                        .font(.system(size: 16, weight: .semibold))
-                        .frame(width: 32, height: 32)
-                        .contentShape(Rectangle())
-                }
-                .foregroundStyle(MatchColor.muted)
-                .accessibilityLabel("More for rally \(rally.id)")
-                .accessibilityIdentifier("rally-menu-\(rally.id)")
+            Button {
+                onToggleExpanded()
+            } label: {
+                Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                    .font(.system(size: 14, weight: .semibold))
+                    .frame(width: 32, height: 32)
+                    .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
+            .foregroundStyle(MatchColor.muted)
+            .accessibilityHidden(true)
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
-        .contentShape(RoundedRectangle(cornerRadius: 14))
-        .contextMenu {
-            RallyQuickActions(
-                rally: rally,
-                onAdjust: onToggleExpanded,
-                onAction: onAction
-            )
-        }
     }
 
     private var checkbox: some View {
@@ -467,41 +439,6 @@ private struct RallyRow: View {
         }
         let text = start + " · " + RallyTime.short(rally.duration)
         return rally.isEdited ? text + " · edited" : text
-    }
-}
-
-/// The quick actions shared by the row's menu and its long-press menu.
-private struct RallyQuickActions: View {
-    let rally: ReviewRally
-    let onAdjust: () -> Void
-    let onAction: (RallyReviewAction) -> Void
-
-    var body: some View {
-        Button {
-            onAction(.moveEnd(rally.id, by: 2))
-        } label: {
-            Label("Extend end +2s", systemImage: "arrow.right.to.line")
-        }
-
-        Button {
-            onAction(.moveStart(rally.id, by: -1))
-        } label: {
-            Label("Start 1s earlier", systemImage: "arrow.left.to.line")
-        }
-
-        Button {
-            onAdjust()
-        } label: {
-            Label("Adjust edges…", systemImage: "arrow.left.and.right")
-        }
-
-        Divider()
-
-        Button(role: .destructive) {
-            onAction(.remove(rally.id))
-        } label: {
-            Label("Not a rally", systemImage: "nosign")
-        }
     }
 }
 
