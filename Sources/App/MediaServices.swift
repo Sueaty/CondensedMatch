@@ -143,6 +143,71 @@ final class ExportService {
         session?.cancelExport()
     }
     func export(project: MatchProject, source: URL, folder: URL) async throws -> URL {
+        try await run(requiring: Self.requiredSpace(project), in: folder) {
+            let composition = try await CompositionBuilder.build(source: source, project: project)
+            return try await self.write(composition, labels: [], in: folder, named: "Condensed", progress: 0...1)
+        }
+    }
+
+    /// 5B: writes the condensed video with breathing room, then one clip per rally when asked.
+    func export(
+        plan: RallyExportPlan,
+        options: RallyExportOptions,
+        source: URL,
+        folder: URL,
+        sourceDuration: Double
+    ) async throws -> (video: URL, clips: [URL]) {
+        let clips = options.savesEachRally ? plan.clips : []
+        let total = max(0.001, plan.duration + clips.reduce(0) { $0 + $1.duration })
+        return try await run(requiring: Self.requiredSpace(seconds: total), in: folder) {
+            let composition = try await CompositionBuilder.build(
+                source: source,
+                segments: plan.segments,
+                duration: sourceDuration
+            )
+            var done = plan.duration
+            let video = try await self.write(
+                composition,
+                labels: options.showsRallyNumber ? plan.labels : [],
+                in: folder,
+                named: "Condensed",
+                progress: 0...(done / total)
+            )
+            var written: [URL] = []
+            do {
+                for clip in clips {
+                    let clipComposition = try await CompositionBuilder.build(
+                        source: source,
+                        segments: [PointSegment(start: clip.sourceStart, end: clip.sourceEnd)],
+                        duration: sourceDuration
+                    )
+                    let label = RallyExportPlan.Label(number: clip.number, start: 0, end: clip.duration)
+                    let lower = done / total
+                    done += clip.duration
+                    let url = try await self.write(
+                        clipComposition,
+                        labels: options.showsRallyNumber ? [label] : [],
+                        in: folder,
+                        named: String(format: "Rally-%02d", clip.number),
+                        progress: lower...min(1, done / total)
+                    )
+                    written.append(url)
+                }
+            } catch {
+                for url in [video] + written {
+                    try? FileManager.default.removeItem(at: url)
+                }
+                throw error
+            }
+            return (video, written)
+        }
+    }
+
+    private func run<Result>(
+        requiring bytes: Int64,
+        in folder: URL,
+        _ body: () async throws -> Result
+    ) async throws -> Result {
         guard !isRunning else {
             throw MatchError.invalidMedia("An export is already running.")
         }
@@ -154,9 +219,19 @@ final class ExportService {
             session = nil
         }
         // High-quality export may exceed source bitrate; reserve a generous allowance.
-        let estimate = Self.requiredSpace(project)
-        try StorageSpace.require(estimate, at: folder)
-        let composition = try await CompositionBuilder.build(source: source, project: project)
+        try StorageSpace.require(bytes, at: folder)
+        let result = try await body()
+        progress = 1
+        return result
+    }
+
+    private func write(
+        _ composition: AVMutableComposition,
+        labels: [RallyExportPlan.Label],
+        in folder: URL,
+        named name: String,
+        progress range: ClosedRange<Double>
+    ) async throws -> URL {
         guard !cancellationRequested else {
             throw CancellationError()
         }
@@ -166,14 +241,20 @@ final class ExportService {
         else {
             throw MatchError.invalidMedia("This video cannot be exported on this device.")
         }
+        if !labels.isEmpty {
+            exporter.videoComposition = try await RallyNumberOverlay.videoComposition(
+                for: composition,
+                labels: labels
+            )
+        }
         session = exporter
         let temporary = folder.appendingPathComponent("export-\(UUID().uuidString).partial.mp4")
-        let final = folder.appendingPathComponent("Condensed-\(UUID().uuidString).mp4")
+        let final = folder.appendingPathComponent("\(name)-\(UUID().uuidString).mp4")
         let monitor = Task {
             [weak self] in
 
             while !Task.isCancelled {
-                self?.progress = Double(exporter.progress)
+                self?.progress = range.lowerBound + Double(exporter.progress) * (range.upperBound - range.lowerBound)
                 try? await Task.sleep(for: .milliseconds(250))
             }
         }
@@ -187,7 +268,7 @@ final class ExportService {
             try FileManager.default.setAttributes(
                 [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication],
                 ofItemAtPath: final.path)
-            progress = 1
+            progress = range.upperBound
             return final
         } catch {
             if FileManager.default.fileExists(atPath: temporary.path) {
@@ -196,17 +277,29 @@ final class ExportService {
             throw error
         }
     }
+
     static func requiredSpace(_ project: MatchProject) -> Int64 {
-        max(100_000_000, Int64(project.condensedDuration * 12_500_000) + 100_000_000)
+        requiredSpace(seconds: project.condensedDuration)
     }
+
+    static func requiredSpace(seconds: Double) -> Int64 {
+        max(100_000_000, Int64(seconds * 12_500_000) + 100_000_000)
+    }
+
     func saveToPhotos(_ url: URL) async throws {
+        try await saveToPhotos([url])
+    }
+
+    func saveToPhotos(_ urls: [URL]) async throws {
         let permission = await PHPhotoLibrary.requestAuthorization(for: .addOnly)
         guard permission == .authorized || permission == .limited else {
             throw MatchError.invalidMedia(
                 "Allow Photos access in Settings to save this video, or use Share to save it elsewhere.")
         }
         try await PHPhotoLibrary.shared().performChanges {
-            PHAssetChangeRequest.creationRequestForAssetFromVideo(atFileURL: url)
+            for url in urls {
+                PHAssetChangeRequest.creationRequestForAssetFromVideo(atFileURL: url)
+            }
         }
     }
 }

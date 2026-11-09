@@ -77,7 +77,18 @@ public struct MatchProject: Identifiable, Codable, Sendable {
     public var editorIsAuthoritative: Bool?
     public var undoHistory: [[PointSegment]] = []
     public var warnings: [String] = []
-    public var exportFilename: String?
+    public var exportFilename: String? {
+        didSet {
+            // Rally clips belong to the export they were made with.
+            if exportFilename == nil {
+                exportClipFilenames = nil
+            }
+        }
+    }
+
+    /// Per-rally clips saved alongside the condensed video (5B "Also save each rally").
+    public var exportClipFilenames: [String]?
+    public var rallyExportOptions: RallyExportOptions?
     public init(id: UUID = UUID(), title: String, source: SourceAssetReference, createdAt: Date = Date()) {
         self.id = id
         self.title = title

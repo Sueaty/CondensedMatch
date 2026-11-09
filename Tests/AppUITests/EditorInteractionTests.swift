@@ -575,6 +575,41 @@ final class EditorInteractionTests: XCTestCase {
         XCTAssertEqual(total(app), 7.8 + 4.8 + 10.8, accuracy: 0.01)
     }
 
+    func testRallyExportOptionsMakeVideoAndClips() {
+        let app = openRallyList()
+        app.buttons["editor-export"].tap()
+        XCTAssertTrue(app.staticTexts["3 RALLIES · 1 SKIPPED"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Every point.\nNone of the waiting."].exists)
+        XCTAssertTrue(app.buttons["export-padding-1s"].isSelected)
+        XCTAssertFalse(app.staticTexts["Source resolution"].exists)
+        let numbers = app.descendants(matching: .any)["export-rally-number"]
+        let eachRally = app.descendants(matching: .any)["export-each-rally"]
+        XCTAssertEqual(numbers.value as? String, "Off")
+        XCTAssertEqual(eachRally.value as? String, "Off")
+        attachScreenshot(app, named: "Rally export options")
+
+        app.buttons["export-padding-2s"].tap()
+        XCTAssertTrue(app.buttons["export-padding-2s"].isSelected)
+        numbers.tap()
+        eachRally.tap()
+        XCTAssertEqual(numbers.value as? String, "On")
+        XCTAssertEqual(eachRally.value as? String, "On")
+        XCTAssertTrue(app.staticTexts["3 separate clips for sharing"].exists)
+
+        app.swipeUp()
+        app.buttons["Create condensed video"].tap()
+        let save = app.buttons["Save to Photos"]
+        XCTAssertTrue(save.waitForExistence(timeout: 60))
+        XCTAssertTrue(app.staticTexts["Ready for\nanother watch."].exists)
+        attachScreenshot(app, named: "Rally export finished")
+
+        // Changing an option after exporting asks for a new video.
+        app.swipeDown()
+        app.buttons["export-padding-none"].tap()
+        XCTAssertTrue(app.buttons["Create condensed video"].waitForExistence(timeout: 3))
+        XCTAssertFalse(save.exists)
+    }
+
     func testFramingNoteBannerCanBeDismissed() {
         let app = openRallyList(environment: ["RALLYCUT_EDITOR_TEST_RALLY_NOTES": "1"])
         let banner = app.otherElements["rally-note"]

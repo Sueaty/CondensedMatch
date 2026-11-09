@@ -7,46 +7,61 @@ struct ExportView: View {
     let projectID: UUID
     @State private var exporter = ExportService()
     @State private var result: URL?
+    @State private var clips: [URL] = []
+    @State private var options = RallyExportOptions.standard
     @State private var message: String?
     @State private var saving = false
     @State private var share = false
+
+    /// Set once rallies were found; the page then offers the 5B rally options.
+    private var review: RallyReview? {
+        store.rallyReview
+    }
+
     var body: some View {
         NavigationStack {
             if let project = store.project(projectID) {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 18) {
-                        Eyebrow(title: "Worth watching again")
+                        Eyebrow(title: eyebrow)
 
-                        Text(
-                            result == nil
-                                ? "Keep the match.\nShare the moments." : "Ready for\nanother watch."
-                        )
-                        .typography(.title2)
-                        .tracking(-1)
+                        Text(headline)
+                            .typography(.title2)
+                            .tracking(-1)
 
                         ExportResultSummary(
-                            condensedDuration: project.condensedDuration,
-                            sourceDuration: project.source.duration
+                            condensedDuration: plan(for: project)?.duration ?? project.condensedDuration,
+                            sourceDuration: project.source.duration,
+                            mentionsFootage: review == nil
                         )
 
-                        VStack(alignment: .leading, spacing: 10) {
-                            LabeledContent("Source resolution") {
-                                Text("\(project.source.width) × \(project.source.height)")
+                        if let plan = plan(for: project) {
+                            RallyExportOptionsCard(
+                                options: $options,
+                                clipCount: plan.clips.count
+                            )
+                            .disabled(exporter.isRunning || saving)
+                        } else {
+                            VStack(alignment: .leading, spacing: 10) {
+                                LabeledContent("Source resolution") {
+                                    Text("\(project.source.width) × \(project.source.height)")
+                                        .foregroundStyle(MatchColor.muted)
+                                }
+
+                                LabeledContent("Format") {
+                                    Text("MP4 · highest quality")
+                                        .foregroundStyle(MatchColor.muted)
+                                }
+
+                                Text("Keep this screen open while exporting.")
+                                    .typography(.caption)
                                     .foregroundStyle(MatchColor.muted)
                             }
-
-                            LabeledContent("Format") {
-                                Text("MP4 · highest quality")
-                                    .foregroundStyle(MatchColor.muted)
-                            }
-
-                            Text("Keep this screen open while exporting.")
-                                .typography(.caption)
-                                .foregroundStyle(MatchColor.muted)
+                            .padding(.vertical, 16)
+                            .padding(.horizontal, 20)
+                            .background(.white.opacity(0.75), in: RoundedRectangle(cornerRadius: 18))
                         }
-                        .padding(.vertical, 16)
-                        .padding(.horizontal, 20)
-                        .background(.white.opacity(0.75), in: RoundedRectangle(cornerRadius: 18))
+
                         if let message {
                             WarningCard(text: message)
                         }
@@ -65,8 +80,9 @@ struct ExportView: View {
                                     saving = true
                                     Task {
                                         do {
-                                            try await exporter.saveToPhotos(result)
-                                            message = "Saved to Photos."
+                                            try await exporter.saveToPhotos([result] + clips)
+                                            message = clips.isEmpty
+                                                ? "Saved to Photos." : "Saved \(clips.count + 1) videos to Photos."
                                         } catch {
                                             message = error.localizedDescription
                                         }
@@ -120,16 +136,15 @@ struct ExportView: View {
                 }
                 .interactiveDismissDisabled(exporter.isRunning || saving)
                 .onAppear {
-                    if let filename = project.exportFilename {
-                        let url = store.folder(projectID).appendingPathComponent(filename)
-                        if FileManager.default.fileExists(atPath: url.path) {
-                            result = url
-                        }
-                    }
+                    options = project.rallyExportOptions ?? .standard
+                    restoreExport(of: project)
+                }
+                .onChange(of: options) { _, options in
+                    keep(options)
                 }
                 .sheet(isPresented: $share) {
                     if let result {
-                        ShareSheet(url: result)
+                        ShareSheet(urls: [result] + clips)
                     }
                 }
             }
@@ -143,18 +158,91 @@ struct ExportView: View {
             }
         }
     }
+    private var eyebrow: String {
+        guard let review else {
+            return "Worth watching again"
+        }
+        let skipped = review.rallies.count - review.checkedCount
+        let rallies = "\(review.checkedCount) \(review.checkedCount == 1 ? "rally" : "rallies")"
+        return skipped == 0 ? rallies : rallies + " · \(skipped) skipped"
+    }
+
+    private var headline: String {
+        if result != nil {
+            return "Ready for\nanother watch."
+        }
+        return review == nil ? "Keep the match.\nShare the moments." : "Every point.\nNone of the waiting."
+    }
+
+    private func plan(for project: MatchProject) -> RallyExportPlan? {
+        guard let review else {
+            return nil
+        }
+        return RallyExportPlan(rallies: review.segments, options: options, sourceDuration: project.source.duration)
+    }
+
+    private func restoreExport(of project: MatchProject) {
+        guard let filename = project.exportFilename else {
+            return
+        }
+        let folder = store.folder(projectID)
+        let url = folder.appendingPathComponent(filename)
+        let clipURLs = (project.exportClipFilenames ?? []).map {
+            folder.appendingPathComponent($0)
+        }
+        let urls = [url] + clipURLs
+        guard urls.allSatisfy({ FileManager.default.fileExists(atPath: $0.path) }) else {
+            return
+        }
+        result = url
+        clips = clipURLs
+    }
+
+    /// Remembers the rally options; a finished video made with other options is no longer current.
+    private func keep(_ options: RallyExportOptions) {
+        guard var latest = store.project(projectID), (latest.rallyExportOptions ?? .standard) != options else {
+            return
+        }
+        latest.rallyExportOptions = options
+        if result != nil {
+            latest.exportFilename = nil
+            result = nil
+            clips = []
+            message = nil
+        }
+        Task {
+            await store.updateProject(latest)
+        }
+    }
+
     private func export(_ project: MatchProject) {
         message = nil
+        let source = store.sourceURL(project)
+        let folder = store.folder(projectID)
+        let plan = plan(for: project)
+        let options = options
         Task {
             do {
-                let url = try await exporter.export(
-                    project: project, source: store.sourceURL(project), folder: store.folder(projectID))
+                let output: (video: URL, clips: [URL])
+                if let plan {
+                    output = try await exporter.export(
+                        plan: plan,
+                        options: options,
+                        source: source,
+                        folder: folder,
+                        sourceDuration: project.source.duration
+                    )
+                } else {
+                    output = (try await exporter.export(project: project, source: source, folder: folder), [])
+                }
                 guard var latest = store.project(projectID) else {
                     return
                 }
-                latest.exportFilename = url.lastPathComponent
+                latest.exportFilename = output.video.lastPathComponent
+                latest.exportClipFilenames = output.clips.isEmpty ? nil : output.clips.map(\.lastPathComponent)
                 if await store.updateProject(latest) {
-                    result = url
+                    result = output.video
+                    clips = output.clips
                 }
             } catch {
                 message =
@@ -167,6 +255,7 @@ struct ExportView: View {
 private struct ExportResultSummary: View {
     let condensedDuration: Double
     let sourceDuration: Double
+    var mentionsFootage = true
 
     private var keptFraction: Double {
         guard sourceDuration > 0 else {
@@ -184,7 +273,10 @@ private struct ExportResultSummary: View {
                     .monospacedDigit()
                     .foregroundStyle(.white)
 
-                Text("from \(timeLabel(sourceDuration)) of footage")
+                Text(
+                    mentionsFootage
+                        ? "from \(timeLabel(sourceDuration)) of footage" : "from \(timeLabel(sourceDuration))"
+                )
                     .typography(.caption)
                     .foregroundStyle(.white.opacity(0.65))
             }
@@ -215,6 +307,153 @@ private struct ExportResultSummary: View {
     }
 }
 
+/// 5B: breathing room, rally numbers and per-rally clips.
+private struct RallyExportOptionsCard: View {
+    @Binding var options: RallyExportOptions
+    let clipCount: Int
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Breathing room")
+                    .typography(.body)
+                    .fontWeight(.semibold)
+
+                RallyPaddingPicker(padding: $options.padding)
+
+                Text("Adds a moment before the serve and after the last shot.")
+                    .typography(.caption)
+                    .foregroundStyle(MatchColor.muted)
+            }
+
+            RallyOptionSwitch(
+                title: "Rally number on screen",
+                detail: "Small “Rally 7” tag in the corner",
+                isOn: $options.showsRallyNumber
+            )
+            .accessibilityIdentifier("export-rally-number")
+
+            RallyOptionSwitch(
+                title: "Also save each rally",
+                detail: "\(clipCount) separate \(clipCount == 1 ? "clip" : "clips") for sharing",
+                isOn: $options.savesEachRally
+            )
+            .accessibilityIdentifier("export-each-rally")
+        }
+        .padding(.vertical, 16)
+        .padding(.horizontal, 20)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.white.opacity(0.75), in: RoundedRectangle(cornerRadius: 18))
+    }
+}
+
+private struct RallyPaddingPicker: View {
+    @Binding var padding: RallyExportOptions.Padding
+    @Environment(\.isEnabled) private var isEnabled
+
+    var body: some View {
+        HStack(spacing: 0) {
+            ForEach(RallyExportOptions.Padding.allCases, id: \.self) { choice in
+                let isSelected = choice == padding
+                Button {
+                    withAnimation(.snappy(duration: 0.2)) {
+                        padding = choice
+                    }
+                } label: {
+                    Text(title(choice))
+                        .typography(.body)
+                        .fontWeight(isSelected ? .semibold : .regular)
+                        .foregroundStyle(isSelected ? MatchColor.ink : MatchColor.muted)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 30)
+                        .background {
+                            if isSelected {
+                                RoundedRectangle(cornerRadius: 8)
+                                    .fill(.white)
+                                    .shadow(color: .black.opacity(0.08), radius: 2, y: 1)
+                            }
+                        }
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(accessibilityTitle(choice))
+                .accessibilityAddTraits(isSelected ? .isSelected : [])
+                .accessibilityIdentifier("export-padding-\(title(choice).lowercased())")
+            }
+        }
+        .padding(3)
+        .background(MatchColor.ink.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
+        .opacity(isEnabled ? 1 : 0.5)
+    }
+
+    private func title(_ choice: RallyExportOptions.Padding) -> String {
+        switch choice {
+        case .none:
+            return "None"
+        case .one:
+            return "1s"
+        case .two:
+            return "2s"
+        }
+    }
+
+    private func accessibilityTitle(_ choice: RallyExportOptions.Padding) -> String {
+        switch choice {
+        case .none:
+            return "No breathing room"
+        case .one:
+            return "1 second"
+        case .two:
+            return "2 seconds"
+        }
+    }
+}
+
+private struct RallyOptionSwitch: View {
+    let title: String
+    let detail: String
+    @Binding var isOn: Bool
+    @Environment(\.isEnabled) private var isEnabled
+
+    var body: some View {
+        Button {
+            withAnimation(.snappy(duration: 0.2)) {
+                isOn.toggle()
+            }
+        } label: {
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .typography(.body)
+                        .fontWeight(.semibold)
+                        .foregroundStyle(MatchColor.ink)
+
+                    Text(detail)
+                        .typography(.caption)
+                        .foregroundStyle(MatchColor.muted)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                Capsule()
+                    .fill(isOn ? MatchColor.ink : MatchColor.ink.opacity(0.2))
+                    .frame(width: 48, height: 28)
+                    .overlay(alignment: isOn ? .trailing : .leading) {
+                        Circle()
+                            .fill(isOn ? MatchColor.lime : .white)
+                            .frame(width: 22, height: 22)
+                            .padding(3)
+                    }
+            }
+            .contentShape(Rectangle())
+            .opacity(isEnabled ? 1 : 0.5)
+        }
+        .buttonStyle(.plain)
+        .accessibilityElement(children: .combine)
+        .accessibilityValue(isOn ? "On" : "Off")
+        .accessibilityAddTraits(.isToggle)
+    }
+}
+
 private struct ExportActionsLayout: Layout {
     private let spacing: CGFloat = 12
 
@@ -242,9 +481,9 @@ private struct ExportActionsLayout: Layout {
 }
 
 struct ShareSheet: UIViewControllerRepresentable {
-    let url: URL
+    let urls: [URL]
     func makeUIViewController(context: Context) -> UIActivityViewController {
-        UIActivityViewController(activityItems: [url], applicationActivities: nil)
+        UIActivityViewController(activityItems: urls, applicationActivities: nil)
     }
     func updateUIViewController(_ controller: UIActivityViewController, context: Context) {
     }
